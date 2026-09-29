@@ -1,0 +1,328 @@
+#+TITLE: org-show enhancements: beamer columns, title pages and more
+#+OPTIONS: toc:2 num:nil ^:{}
+
+This file describes the changes made to =org-show.el= so that an Org file
+written for beamer export can be presented directly in Emacs.  The original
+org-show documentation is in [[file:org-show.org]]; the previous version of
+the code is kept in =org-show-old.el=.
+
+* Overview
+
+The enhanced org-show adds:
+
+- *Beamer columns side by side*: frames with =:BMCOL:= / =:BEAMER_col:=
+  children are shown as a title strip above one window per column.
+- *Images fitted to the column*: plots are drawn by org-show itself and
+  scaled to the width and height of their window.
+- *Text fitted to the slide*: text shrinks until each column fits, and
+  size changes carry over to later slides.
+- *Reflowed paragraphs*: hard-wrapped source lines are joined on screen, as
+  LaTeX would do.
+- *Clutter hidden*: property drawers, =#+NAME:=, =#+RESULTS:=, =#+ATTR_*:=
+  lines, non-exported source blocks and raw LaTeX lines are not shown.
+- *Title page and section pages*: generated (and animated) from =#+TITLE=,
+  =#+AUTHOR=, =#+DATE= and from the headings above the slides.
+- *Beautification during the presentation only*: org-modern,
+  variable-pitch text and hidden emphasis markers are switched on for
+  the presentation and turned off afterwards.
+- *COMMENT headings skipped*, as in beamer export.
+
+* Preparing a presentation
+
+** Slides
+A slide is a heading with the =:slide:= tag.  For a beamer file with
+=#+OPTIONS: H:2=, tag every level-2 heading:
+
+#+begin_example
+,* Section title
+,** Frame title                                                     :slide:
+#+end_example
+
+Add =tags:nil= to =#+OPTIONS= so the tag is not printed in the beamer output:
+
+#+begin_example
+,#+OPTIONS: toc:nil H:2 tags:nil
+#+end_example
+
+To tag all level-2 headings of a file at once, evaluate this in the file's
+buffer:
+
+#+begin_src emacs-lisp
+(org-map-entries (lambda () (org-toggle-tag "slide" 'on)) "LEVEL=2")
+#+end_src
+
+Slides under a =COMMENT= heading (or with =COMMENT= in their own
+heading) are skipped, so the presentation has the same frames as the
+PDF.  Un-commenting a heading brings its slide back, since it keeps
+its tag.
+
+** Columns
+Columns are written exactly as for beamer: children of the slide heading with
+a =BEAMER_col= property (or the =BMCOL= tag).
+
+#+begin_example
+,** Title                                                           :slide:
+,*** Left                                                           :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+[[file:image-8.png]]
+
+,*** Right                                                          :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.45
+:END:
++ First point
++ Second point
+#+end_example
+
+The column widths on screen are proportional to the =BEAMER_col= values.  A
+column without a width gets an equal share.  Text between the slide heading
+and the first column is shown in the title strip.
+
+** Title page
+The title page is made from these keywords:
+
+| Keyword       | Shown as        |
+|---------------+-----------------|
+| =#+TITLE:=    | title (bold)    |
+| =#+SUBTITLE:= | subtitle        |
+| =#+AUTHOR:=   | author (italic) |
+| =#+DATE:=     | date (italic)   |
+
+LaTeX in these values is tidied up: =\\= starts a new line, =\today= becomes
+today's date, =\and= becomes a comma, and other commands are dropped while
+their text is kept.  Empty keywords are left out.  Without =#+TITLE=, the
+file name is used, as beamer does.
+
+** Section pages
+A section page is shown before the first slide under each heading that sits
+above the slides, e.g. each level-1 heading when the slides are level-2
+headings.  A section whose slides are all commented out gets no page.
+
+* Running the presentation
+
+** Starting and stopping
+| Command                           | Does                                    |
+|-----------------------------------+-----------------------------------------|
+| =M-x org-show-start-slideshow=    | start at the beginning (the title page) |
+| menu /org-show → Open this slide/ | start at the slide containing point     |
+| =M-x org-show-stop-slideshow=     | stop and restore the buffer             |
+
+Stopping removes the column windows and their buffers, un-hides
+everything, turns off the beautification modes that the presentation
+turned on, and widens the buffer.
+
+Note: starting and stopping realign all tags in the buffer, which marks it
+as modified.  Only whitespace changes.
+
+** Keys
+These are active while =org-show-mode= is on (it is turned on by
+=org-show-start-slideshow=):
+
+| Key       | Command                              |
+|-----------+--------------------------------------|
+| =PgDn=    | next slide                           |
+| =PgUp=    | previous slide                       |
+| =F5=      | start the presentation               |
+| =F6=      | presentation the current slide again         |
+| ~C-=~     | larger text (this and later slides)  |
+| =C--=     | smaller text (this and later slides) |
+| =M-ESC g= | go to slide number                   |
+| =M-ESC t= | table of contents                    |
+| =M-ESC q= | stop the presentation                |
+
+The keys work from any window, including a column window.
+
+** Table of contents
+=M-ESC t= lists all slides, including "Title page: …" and "Section: …"
+entries, as links.  Clicking a link goes to that slide; =q= closes the list.
+
+** Editing during the show
+The column windows presentation indirect buffers of the presentation file, narrowed
+to the column.  Their text is the file's text, so edits made during the show
+go straight into the file.
+
+* How slides are displayed
+
+** Layout
+- The frame is split into a *title strip* (the heading) and one window per
+  column, with mode lines hidden.
+- Slides without columns use a single window, as before.
+- Title and section pages use a separate buffer, =*org-show-page*=, with the
+  text centred.  If =org-show-animate-pages= is on, the lines are animated
+  in; any key press skips the animation.
+
+** Images
+Image links (=[[file:plot.png]]=) are drawn by org-show with their own
+overlays.  Each image is scaled down to at most
+=org-show-image-width-fraction= of the window width and
+=org-show-image-height-fraction= of its height.
+
+This does not depend on =org-image-actual-width= or on scimax's own inline
+image code, which ignored the widths set for the presentation.  When the presentation stops,
+the normal Org inline images are shown again.
+
+** Text size
+Each slide starts at its maximum text scale and shrinks one step at a time
+until everything fits in its window.  All columns of a slide get the same
+scale.
+
+- The maximum scale is =org-show-column-text-scale= for columns and
+  =org-show-text-scale= for slides without columns.
+- ~C-=~ and =C--= change that maximum by one step from the size currently on
+  screen, so the new size applies to all later slides.
+- Text never grows beyond what fits.  To allow text that overflows the
+  window, set =org-show-fit-text= to nil.
+
+** Paragraphs
+Line breaks inside a paragraph are displayed as spaces, so hard-wrapped
+source text is rewrapped to the column width.  The file is not changed.
+
+** Lists
+Lists are laid out with overlays, so the file is not changed:
+
+- *Bullets by depth*: unordered items get the bullets in
+  =org-show-list-bullets= by nesting depth, whatever bullet character
+  (=+=, =-=, =*=) is used in the file.  The default ='("●" "○" "■" "□")=
+  gives =●= for items, =○= for sub-items, and so on, starting again from
+  the first for deeper lists.  Numbered items keep their numbers.
+- *Indentation*: sub-items are indented by =org-show-list-indent= (4)
+  spaces per level, in the text font, so the indentation scales with the
+  text and is clear even in proportional text.
+- *Wrapped lines*: when an item wraps, the following lines start under
+  the item's text, not at the left margin (=org-show-hanging-indent=).
+
+The bullets use the face =org-show-bullet= (the level-1 heading colour,
+bold, 1.3 times the text height).  For example:
+
+#+begin_src emacs-lisp
+;; arrows and dashes
+(setq org-show-list-bullets '("➤" "–" "•"))
+
+;; more indentation per level
+(setq org-show-list-indent 6)
+
+;; bigger bullets (in use-package, :custom-face works in any load order)
+(use-package org-show
+  :custom-face
+  (org-show-bullet ((t :inherit org-level-1 :weight bold :height 1.5))))
+#+end_src
+
+** Hidden clutter
+When =org-show-hide-clutter= is non-nil, the following are hidden:
+
+- property drawers
+- =#+NAME:=, =#+RESULTS:=, =#+CAPTION:= and =#+ATTR_*:= lines
+- source blocks with =:exports results= or =:exports none= (their results,
+  such as plots, stay visible)
+- =emacs-lisp-slide= blocks
+- standalone raw LaTeX lines such as =\vspace{-0.5cm}=
+- blank lines left at the top of a column
+- the =:slide:= tag
+
+* Beautification
+
+During the presentation, org-show turns on the minor modes in
+=org-show-beautify-modes= in the slide buffers, and hides emphasis markers.
+They are turned off when the presentation stops, unless they were already on
+before.  Normal editing is not affected.
+
+The default, ='(org-modern-mode variable-pitch-mode)=, gives:
+
+- styled headings, from [[https://github.com/minad/org-modern][org-modern]]
+- larger, coloured list bullets that change with depth: =●= for items, =○=
+  for sub-items, then =■= and =□= (=org-show-list-bullets=, face
+  =org-show-bullet=); see [[*Lists][Lists]]
+- proportional text, from the built-in =variable-pitch-mode=
+- =*bold*= shown as *bold* without the asterisks
+  (=org-show-hide-emphasis-markers=)
+
+The bullets replace org-modern's own (small) ones only during the show;
+org-modern is unchanged elsewhere.
+
+Some modes are turned *off* during the presentation and back on when it stops:
+those in =org-show-disable-modes=, by default =org-indent-mode= (from
+=org-startup-indented=), whose heading-level indentation and wrap prefixes
+spoil the list layout, and =display-line-numbers-mode=, since line
+numbers do not belong on slides.
+
+org-modern's tag labels are turned off during the show, since they would
+show part of the hidden =:slide:= tag.
+
+Modes that are not installed are skipped silently.  org-superstar and
+org-bullets are not needed with org-modern, which does the same and
+more.  org-appear only helps while editing.
+
+** Turning parts of it off
+Put any of these in the configuration (or evaluate with =M-:=), then start
+the presentation again:
+
+#+begin_src emacs-lisp
+;; plain org, no beautification at all
+(setq org-show-beautify-modes nil)
+
+;; org-modern only, fixed-width text
+(setq org-show-beautify-modes '(org-modern-mode))
+
+;; variable-width text only, no org-modern
+(setq org-show-beautify-modes '(variable-pitch-mode))
+
+;; keep the bullets as they are (org-modern's own, if it is on)
+(setq org-show-list-bullets nil)
+
+;; keep line numbers during the presentation (only turn off org-indent)
+(setq org-show-disable-modes '(org-indent-mode))
+
+;; keep the *, /, = emphasis markers visible
+(setq org-show-hide-emphasis-markers nil)
+#+end_src
+
+Note: in variable-pitch text, Org tables and code blocks can lose their
+alignment.
+
+* Settings
+
+| Variable                         | Default                                        | Meaning                                                  |
+|----------------------------------+------------------------------------------------+----------------------------------------------------------|
+| =org-show-text-scale=            | 4                                              | maximum text scale on slides without columns             |
+| =org-show-column-text-scale=     | 2                                              | maximum text scale in columns                            |
+| =org-show-title-text-scale=      | 2                                              | text scale of the title strip                            |
+| =org-show-min-text-scale=        | -6                                             | smallest scale used when fitting text                    |
+| =org-show-fit-text=              | t                                              | shrink text to fit the window                            |
+| =org-show-image-width-fraction=  | 0.8                                            | maximum image width, as a fraction of the window width   |
+| =org-show-image-height-fraction= | 0.8                                            | maximum image height, as a fraction of the window height |
+| =org-show-hide-clutter=          | t                                              | hide drawers, keywords, src blocks and raw LaTeX         |
+| =org-show-beautify-modes=        | ='(org-modern-mode variable-pitch-mode)=       | modes turned on during the presentation                          |
+| =org-show-disable-modes=         | ='(org-indent-mode display-line-numbers-mode)= | modes turned off during the presentation                         |
+| =org-show-list-bullets=          | ='("●" "○" "■" "□")=                           | list bullets by nesting depth                            |
+| =org-show-list-indent=           | 4                                              | indentation per list level, in spaces                    |
+| =org-show-hanging-indent=        | t                                              | indent sub-items and align wrapped lines of items        |
+| =org-show-hide-emphasis-markers= | t                                              | hide emphasis markers during the presentation                    |
+| =org-show-title-page=            | t                                              | presentation a title page                                        |
+| =org-show-section-pages=         | t                                              | presentation section pages                                       |
+| =org-show-animate-pages=         | t                                              | animate the title and section pages                      |
+| =org-show-page-text-scale=       | 5                                              | text scale of the title and section pages                |
+| =org-show-slide-tag=             | "slide"                                        | tag that marks slides                                    |
+
+The title and section pages use these faces, which can be customized with
+=M-x customize-face=:
+
+| Face                     | Used for                     |
+|--------------------------+------------------------------|
+| =org-show-page-title=    | title on the title page      |
+| =org-show-page-subtitle= | subtitle                     |
+| =org-show-page-info=     | author and date              |
+| =org-show-page-section=  | heading on a section page    |
+| =org-show-bullet=        | list bullets during the presentation |
+
+* Tips
+
+- *Re-evaluating =org-show.el= does not reset variables.*  =defvar= keeps
+  a value that is already set.  To pick up a new default, use =M-x
+  eval-defun= on that =defvar=, =setq= the variable, or restart Emacs.
+- *Changing slides during a show*: after adding, removing or
+  reordering slides, restart the presentation (or run
+  =org-show-initialize=) to rebuild the slide list.
+- *Beamer export is unchanged*: the =:slide:= tag is hidden by
+  =tags:nil=, and =BMCOL= is handled by ox-beamer as before.
