@@ -4,7 +4,7 @@
 ;; Copyright (C) 2026 Vikas Rawal
 
 ;; Author: Vikas Rawal <vikasrawal@gmail.com>
-;; Assisted-by: Claude Opus 5.5
+;; Assisted-by: Claude Code:claude-opus-5-5
 ;; Maintainer: Vikas Rawal <vikasrawal@gmail.com>
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1") (org "9.6"))
