@@ -1,54 +1,58 @@
-;; -*- lexical-binding: t; -*-
-;;; org-show-beamer.el --- org-show with side-by-side beamer columns
-;; Copyright(C) 2014 John Kitchin
+;;; org-slideboard.el --- Present Org files as slides with columns and code -*- lexical-binding: t; -*-
 
-;; Author: John Kitchin <jkitchin@andrew.cmu.edu>
-;; Contributions from Sacha Chua.
-;; Beamer column support added 2026.
-;; This file is not currently part of GNU Emacs.
+;; Copyright (C) 2014 John Kitchin
+;; Copyright (C) 2026 Vikas Rawal
 
-;; This program is free software; you can redistribute it and/or
-;; modify it under the terms of the GNU General Public License as
-;; published by the Free Software Foundation; either version 2, or (at
-;; your option) any later version.
+;; Author: Vikas Rawal <vikasrawal@gmail.com>
+;; Maintainer: Vikas Rawal <vikasrawal@gmail.com>
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "28.1") (org "9.6"))
+;; Keywords: outlines, tex, multimedia, convenience
+;; URL: https://github.com/vikasrawal/org-slideboard
 
-;; This program is distributed in the hope that it will be useful, but
-;; WITHOUT ANY WARRANTY; without even the implied warranty of
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-;; General Public License for more details.
+;; This file is not part of GNU Emacs.
+
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
 
 ;; You should have received a copy of the GNU General Public License
-;; along with this program ; see the file COPYING.  If not, write to
-;; the Free Software Foundation, Inc., 59 Temple Place - Suite 330,
-;; Boston, MA 02111-1307, USA.
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Commentary:
-;; A simple mode for presenting org-files as slide-shows. A slide is a headline
-;; with a :slide: tag. See file:org-show.org for usage.
+
+;; org-slideboard presents an Org file as slides, inside Emacs.  A slide
+;; is a heading with the :slide: tag.  The text stays live Org, so it
+;; can be edited, and code run, during the show.
 ;;
-;; This is a drop-in replacement for org-show.el that also understands
-;; beamer columns.  When a slide has children with a BEAMER_col property
-;; (or a :BMCOL: tag), the slide is shown as:
+;; It is meant for files written for beamer export, and shows them much
+;; as beamer would:
 ;;
-;;   +------------------------------------------+
-;;   | slide heading (and any text before cols) |
-;;   +----------------------+-------------------+
-;;   | column 1             | column 2          |
-;;   +----------------------+-------------------+
+;; - beamer columns (BEAMER_col or the BMCOL tag) side by side, each in
+;;   its own window, with images scaled to the column;
+;; - a title page and section pages from #+TITLE, #+AUTHOR and the
+;;   headings above the slides;
+;; - text fitted to the window, paragraphs reflowed, and lists, tables
+;;   and LaTeX equations laid out for the slide;
+;; - Org macros expanded, with optional definitions for the show;
+;; - source blocks shown as code, results, or both side by side (or top
+;;   and bottom), with C-c C-c updating the results and the block's
+;;   editor shown next to a running R or Python REPL;
+;; - beamer and babel clutter hidden.
 ;;
-;; Each column is an indirect buffer narrowed to the column body, in its
-;; own window, with widths proportional to BEAMER_col.  Images are scaled
-;; to the column width.  Since the column buffers are indirect, the text
-;; is still live org and can be edited during the show.
+;; Start a presentation with M-x org-slideboard-start-slideshow in an
+;; Org buffer.  PgDn and PgUp move between slides; M-ESC q stops.
+;; Settings can be given per file with #+SLIDEBOARD: lines.  See the
+;; README for the full documentation.
 ;;
-;; Beamer/babel clutter (property drawers, #+NAME/#+RESULTS/#+ATTR_ lines,
-;; src blocks with :exports results or none, and standalone raw LaTeX
-;; lines such as \vspace{...}) is hidden during the show.
-;;
-;; LaTeX equations are sized to the text of the slide, so they shrink
-;; and grow with it.
-;;
-;; Load this file instead of org-show.el; it provides the same feature.
+;; org-slideboard is based on org-show by John Kitchin, from scimax,
+;; which itself built on Sacha Chua's presentation code.
 
 ;;; Code:
 (require 'animate)
@@ -59,137 +63,184 @@
 (require 'org-element)
 (require 'org-macro)
 (require 'face-remap)
+(require 'subr-x)
+(require 'seq)
 
 ;;* Variables
 
-(defvar org-show-presentation-file nil
+(defgroup org-slideboard nil
+  "Present Org files as slides."
+  :group 'org
+  :prefix "org-slideboard-"
+  :link '(url-link "https://github.com/vikasrawal/org-slideboard"))
+
+(defvar org-slideboard-presentation-file nil
   "File containing the presentation.")
 
-(defvar org-show-slide-tag "slide"
-  "Tag that marks slides.")
+(defcustom org-slideboard-slide-tag "slide"
+  "Tag that marks slides."
+  :type 'string
+  :group 'org-slideboard)
 
-(defvar org-show-slide-tag-regexp
-  (concat ":" (regexp-quote org-show-slide-tag) ":")
-  "Regex to identify slide tags.")
-
-(defvar org-show-latex-scale 4.0
+(defcustom org-slideboard-latex-scale 4.0
   "Scale at which LaTeX previews are rendered during the show.
 This sets the resolution only: the equations are then displayed at
-the size of the text, see `org-show-latex-size'.  A high value keeps
-them sharp when the text is large.")
+the size of the text, see `org-slideboard-latex-size'.  A high value keeps
+them sharp when the text is large."
+  :type 'number
+  :group 'org-slideboard)
 
-(defvar org-show-latex-size 0.8
+(defcustom org-slideboard-latex-size 0.8
   "Size of LaTeX equations relative to the text on the slides.
 At 1.0, the LaTeX font is as large as the text font.  Equations grow
-and shrink with the text of the slide.")
+and shrink with the text of the slide."
+  :type 'number
+  :group 'org-slideboard)
 
-(defvar org-show-latex-preview-drop-regexp
+(defcustom org-slideboard-latex-preview-drop-regexp
   "^[ \t]*\\\\\\(?:setbeamer\\|use[a-z]*theme\\|AtBegin\\(?:Section\\|Subsection\\|Part\\|Lecture\\)\\|beamertemplate\\|logo\\|titlegraphic\\|institute\\).*"
   "Lines of the LaTeX preamble left out when previewing equations.
 Org previews equations with the article class, but it adds the
 #+LATEX_HEADER lines of the file, which in a beamer presentation use
 commands such as \\setbeamersize that article does not know.  LaTeX
 then prints their arguments, e.g. \"description width=0.1cm\", in
-every equation image.  Set to nil to keep all lines.")
+every equation image.  Set to nil to keep all lines."
+  :type '(choice (const :tag "Keep all lines" nil) regexp)
+  :group 'org-slideboard)
 
-(defvar org-show--latex-point-pixels nil
+(defvar org-slideboard--latex-point-pixels nil
   "Pixels per LaTeX point in preview images, as (KEY . PIXELS).
-KEY is (PROCESS SCALE PREAMBLE-HASH), see `org-show--latex-point'.")
+KEY is (PROCESS SCALE PREAMBLE-HASH), see `org-slideboard--latex-point'.")
 
-(defvar-local org-show--latex-point nil
+(defvar-local org-slideboard--latex-point nil
   "Pixels per LaTeX point in the preview images of this buffer.")
 
-(defvar org-show-center-display-math nil
+(defcustom org-slideboard-center-display-math nil
   "If non-nil, center display equations horizontally, as LaTeX does.
 By default they are left aligned, like the text.
 Display equations are \\=\\[...\\], $$...$$ and LaTeX environments
-on lines of their own.  Inline math is not moved.")
+on lines of their own.  Inline math is not moved."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-text-scale 4
+(defcustom org-slideboard-text-scale 4
   "Largest text scale for slides without columns.
 Text is shrunk below this when needed to fit the window, see
-`org-show-fit-text'.  \\[org-show-increase-text-size] and
-\\[org-show-decrease-text-size] change it for all later slides.")
+`org-slideboard-fit-text'.  \\[org-slideboard-increase-text-size] and
+\\[org-slideboard-decrease-text-size] change it for all later slides."
+  :type 'integer
+  :group 'org-slideboard)
 
-(defvar org-show-title-text-scale 2
-  "Text scale for the slide title strip on slides with columns.")
+(defcustom org-slideboard-title-text-scale 2
+  "Text scale for the slide title strip on slides with columns."
+  :type 'integer
+  :group 'org-slideboard)
 
-(defvar org-show-column-text-scale 2
+(defcustom org-slideboard-column-text-scale 2
   "Largest text scale inside beamer column windows.
 Text is shrunk below this when needed to fit the columns, see
-`org-show-fit-text'.  \\[org-show-increase-text-size] and
-\\[org-show-decrease-text-size] change it for all later slides.")
+`org-slideboard-fit-text'.  \\[org-slideboard-increase-text-size] and
+\\[org-slideboard-decrease-text-size] change it for all later slides."
+  :type 'integer
+  :group 'org-slideboard)
 
-(defvar org-show-min-text-scale -6
-  "Smallest text scale used when shrinking text to fit.")
+(defcustom org-slideboard-min-text-scale -6
+  "Smallest text scale used when shrinking text to fit."
+  :type 'integer
+  :group 'org-slideboard)
 
-(defvar org-show-fit-text t
+(defcustom org-slideboard-fit-text t
   "If non-nil, shrink text on each slide until it fits its window.
-All columns of a slide get the same text scale.")
+All columns of a slide get the same text scale."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-image-width-fraction 0.8
-  "Images are scaled to at most this fraction of the window width.")
+(defcustom org-slideboard-image-width-fraction 0.8
+  "Images are scaled to at most this fraction of the window width."
+  :type 'number
+  :group 'org-slideboard)
 
-(defvar org-show-image-height-fraction 0.8
-  "Images are scaled to at most this fraction of the window height.")
+(defcustom org-slideboard-image-height-fraction 0.8
+  "Images are scaled to at most this fraction of the window height."
+  :type 'number
+  :group 'org-slideboard)
 
-(defvar org-show-hide-clutter t
-  "If non-nil, hide drawers, keyword lines, non-exported src blocks and
-raw LaTeX lines during the show.")
+(defcustom org-slideboard-hide-clutter t
+  "If non-nil, hide beamer and babel clutter during the show.
+That is drawers, keyword lines, source blocks shown only as results
+and stray LaTeX lines."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-beautify-modes '(org-modern-mode variable-pitch-mode)
+(defcustom org-slideboard-beautify-modes '(org-modern-mode variable-pitch-mode)
   "Minor modes to turn on in the slide buffers during the show.
 The default gives styled headings and bullets (org-modern) and
 proportional text (`variable-pitch-mode').
 They are turned off again when the show stops, unless they were
 already on.  Modes that are not installed are skipped.  Set to nil
-to show plain org.")
+to show plain org."
+  :type '(repeat symbol)
+  :group 'org-slideboard)
 
-(defface org-show-bullet
+(defface org-slideboard-bullet
   '((t :inherit org-level-1 :weight bold :height 1.3))
-  "Face for list bullets during the show, see `org-show-list-bullets'.
+  "Face for list bullets during the show, see `org-slideboard-list-bullets'.
 Change :height to make the bullets bigger or smaller."
-  :group 'org)
+  :group 'org-slideboard)
 
-(defvar org-show-list-bullets '("●" "○" "■" "□")
+(defcustom org-slideboard-list-bullets '("●" "○" "■" "□")
   "Bullets for unordered list items during the show, by nesting depth.
 The first is used for top-level items, the second for sub-items, and
 so on, starting again from the first for deeper lists.  They are shown
-in face `org-show-bullet'.  Numbered items keep their numbers.  Set to
-nil to keep the bullets as they are (or as org-modern draws them).")
+in face `org-slideboard-bullet'.  Numbered items keep their numbers.  Set to
+nil to keep the bullets as they are (or as org-modern draws them)."
+  :type '(choice (const :tag "Keep the bullets" nil) (repeat string))
+  :group 'org-slideboard)
 
-(defvar org-show-list-indent 4
+(defcustom org-slideboard-list-indent 4
   "Indentation per level of list nesting during the show.
-In spaces of the text font, so it scales with the text.")
+In spaces of the text font, so it scales with the text."
+  :type 'natnum
+  :group 'org-slideboard)
 
-(defvar org-show-hanging-indent t
+(defcustom org-slideboard-hanging-indent t
   "If non-nil, lay out lists during the show.
-Sub-items are indented by `org-show-list-indent' per level, and
-wrapped lines of an item are aligned under its text.")
+Sub-items are indented by `org-slideboard-list-indent' per level, and
+wrapped lines of an item are aligned under its text."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-disable-modes '(org-indent-mode display-line-numbers-mode)
+(defcustom org-slideboard-disable-modes '(org-indent-mode display-line-numbers-mode)
   "Minor modes to turn off in the slide buffers during the show.
 They are turned on again when the show stops.  `org-indent-mode'
 adds heading-level indentation and its own wrap prefixes, which spoil
-the list layout, and line numbers do not belong on slides.")
+the list layout, and line numbers do not belong on slides."
+  :type '(repeat symbol)
+  :group 'org-slideboard)
 
-(defvar org-show-hide-emphasis-markers t
-  "If non-nil, hide the *, /, = etc. emphasis markers during the show.")
+(defcustom org-slideboard-hide-emphasis-markers t
+  "If non-nil, hide the *, /, = etc. emphasis markers during the show."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-hide-macro-markers t
+(defcustom org-slideboard-hide-macro-markers t
   "If non-nil, hide the {{{ and }}} around macros during the show.
 This turns on `org-hide-macro-markers' in the slide buffers.  It
 matters for macros that are not expanded, see
-`org-show-expand-macros'.")
+`org-slideboard-expand-macros'."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-align-tables t
+(defcustom org-slideboard-align-tables t
   "If non-nil, align Org tables to what is displayed on the slides.
 Org aligns a table by the characters in the file, but on a slide a
 cell can show an expanded macro, an equation image or proportional
 text, so the columns would not line up.  The padding is done with
-overlays, so the file is not changed.")
+overlays, so the file is not changed."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-src-display 'exports
+(defcustom org-slideboard-src-display 'exports
   "How source blocks with results are shown on the slides.
 - `exports': follow each block's :exports header: code shows the
   code, results the results, both the code and the results side by
@@ -197,195 +248,203 @@ overlays, so the file is not changed.")
 - `results': show only the results of every block.
 - `both': show the code and the results of every block side by side.
 
-It can be set for one file with #+ORG_SHOW: src:both, and for one
-slide (or a section of slides) with the property ORG_SHOW_SRC.  With
+It can be set for one file with #+SLIDEBOARD: src:both, and for one
+slide (or a section of slides) with the property SLIDEBOARD_SRC.  With
 both, the first such block of a slide is shown in two windows, the
 code on the left and the results on the right; see
-`org-show-execute-src-block' and `org-show-src-repl-functions'.")
+`org-slideboard-execute-src-block' and `org-slideboard-src-repl-functions'."
+  :type '(choice (const :tag "Follow :exports" exports)
+                 (const :tag "Results only" results)
+                 (const :tag "Code and results" both))
+  :group 'org-slideboard)
 
-(defvar org-show-src-code-width 0.5
+(defcustom org-slideboard-src-code-width 0.5
   "Share of the space used for the code when code and results are shown.
 It is a fraction of the width when they are side by side, and of the
-height when the code is above the results, see `org-show-src-split'.")
+height when the code is above the results, see `org-slideboard-src-split'."
+  :type 'number
+  :group 'org-slideboard)
 
-(defvar org-show-src-split 'left-right
+(defcustom org-slideboard-src-split 'left-right
   "How code and results are arranged when both are shown.
 `left-right' puts the code on the left and the results on the
 right; `top-bottom' puts the code above the results.  It can be set
-for one file with #+ORG_SHOW: src-split:top-bottom, and for one slide
-or beamer column (or a section) with the property ORG_SHOW_SRC_SPLIT.
-See `org-show-src-display'.")
+for one file with #+SLIDEBOARD: src-split:top-bottom, and for one slide
+or beamer column (or a section) with the property SLIDEBOARD_SRC_SPLIT.
+See `org-slideboard-src-display'."
+  :type '(choice (const :tag "Code left, results right" left-right)
+                 (const :tag "Code above, results below" top-bottom))
+  :group 'org-slideboard)
 
-(defvar org-show-src-repl-functions
-  '(("R" . org-show--start-R)
-    ("python" . org-show--start-python))
+(defcustom org-slideboard-src-repl-functions
+  '(("R" . org-slideboard--start-R)
+    ("python" . org-slideboard--start-python))
   "Functions that start a REPL for editing a block during the show.
 Each element is (LANGUAGE . FUNCTION).  FUNCTION is called with no
 arguments and returns the REPL buffer.  When a source block is opened
 for editing (\\[org-edit-special]) during the show, the editing buffer
 is shown next to the REPL, where its code can be evaluated.  Blocks
-with a :session header use that session instead, in any language.")
+with a :session header use that session instead, in any language."
+  :type '(alist :key-type string :value-type function)
+  :group 'org-slideboard)
 
-(defvar org-show--split-direction nil
+(defvar org-slideboard--split-direction nil
   "Direction of the code and results split of the slide being shown.")
 
-(defvar org-show--slide-src nil
-  "The ORG_SHOW_SRC setting of the slide being shown, a symbol or nil.")
+(defvar org-slideboard--slide-src nil
+  "The SLIDEBOARD_SRC setting of the slide being shown, a symbol or nil.")
 
-(defvar-local org-show--table-overlays nil
-  "Overlays made by `org-show--align-tables' in this buffer.")
+(defvar-local org-slideboard--table-overlays nil
+  "Overlays made by `org-slideboard--align-tables' in this buffer.")
 
-(defvar org-show-expand-macros t
+(defcustom org-slideboard-expand-macros t
   "If non-nil, show Org macros on the slides as their expansion.
 A macro is expanded with, in this order of preference:
 
-- its #+ORG_SHOW_MACRO: definition in the file, written like a
-  #+MACRO: definition, e.g. \"#+ORG_SHOW_MACRO: cc $2\";
-- its definition in `org-show-macro-templates';
+- its #+SLIDEBOARD_MACRO: definition in the file, written like a
+  #+MACRO: definition, e.g. \"#+SLIDEBOARD_MACRO: cc $2\";
+- its definition in `org-slideboard-macro-templates';
 - Org's own expansion: #+MACRO: definitions and the built-in macros
   such as title, author, date and time.  Export snippets for other
   back-ends, such as @@latex:...@@, are left out of the result, and
-  the contents of @@org-show:...@@ snippets are kept.
+  the contents of @@slideboard:...@@ snippets are kept.
 
 Macros that expand to nothing are left as they are.  The buffer text
-is not changed.")
+is not changed."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-macro-templates nil
+(defcustom org-slideboard-macro-templates nil
   "Definitions of Org macros for the show, as (NAME . TEMPLATE).
 TEMPLATE is a string like the definition in a #+MACRO: line, with
 $1, $2... for the arguments, or a function that is called with the
 arguments as strings and returns the string to show, which may have
 faces.  For example:
 
-  (setq org-show-macro-templates
+  (setq org-slideboard-macro-templates
         \\='((\"cc\" . (lambda (color text)
                      (propertize text \\='face
                                  \\=`(:background ,color))))))
 
-#+ORG_SHOW_MACRO: lines in the file take precedence.  See
-`org-show-expand-macros'.")
+#+SLIDEBOARD_MACRO: lines in the file take precedence.  See
+`org-slideboard-expand-macros'."
+  :type '(alist :key-type string :value-type (choice string function))
+  :group 'org-slideboard)
 
 (defvar org-modern-tag)
 (defvar org-modern-list)
 
-(defvar-local org-show--disabled nil
-  "Modes turned off by `org-show--beautify' in this buffer.")
+(defvar-local org-slideboard--disabled nil
+  "Modes turned off by `org-slideboard--beautify' in this buffer.")
 
-(defvar-local org-show--beautified nil
-  "Modes turned on by `org-show--beautify' in this buffer.")
+(defvar-local org-slideboard--beautified nil
+  "Modes turned on by `org-slideboard--beautify' in this buffer.")
 
-(defvar org-show-title-page t
+(defcustom org-slideboard-title-page t
   "If non-nil, start the show with a title page.
-It is made from the #+TITLE, #+SUBTITLE, #+AUTHOR and #+DATE keywords.")
+It is made from the #+TITLE, #+SUBTITLE, #+AUTHOR and #+DATE keywords."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-section-pages t
+(defcustom org-slideboard-section-pages t
   "If non-nil, show a section page before the first slide of each section.
 A section is a heading above the slides, e.g. each level-1 heading
-when the slides are level-2 headings (#+OPTIONS: H:2).")
+when the slides are level-2 headings (#+OPTIONS: H:2)."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-animate-pages t
+(defcustom org-slideboard-animate-pages t
   "If non-nil, animate the title and section pages.
-Pressing a key skips the rest of the animation.")
+Pressing a key skips the rest of the animation."
+  :type 'boolean
+  :group 'org-slideboard)
 
-(defvar org-show-page-text-scale 5
-  "Text scale for the title and section pages.")
+(defcustom org-slideboard-page-text-scale 5
+  "Text scale for the title and section pages."
+  :type 'integer
+  :group 'org-slideboard)
 
-(defconst org-show--page-buffer "*org-show-page*"
+(defconst org-slideboard--page-buffer "*org-slideboard-page*"
   "Buffer for the title and section pages.")
 
-(defface org-show-page-title
+(defface org-slideboard-page-title
   '((t :inherit org-document-title :height 1.0 :weight bold))
   "Face for the title on the title page."
-  :group 'org)
+  :group 'org-slideboard)
 
-(defface org-show-page-subtitle
+(defface org-slideboard-page-subtitle
   '((t :inherit org-document-info :height 1.0))
   "Face for the subtitle on the title page."
-  :group 'org)
+  :group 'org-slideboard)
 
-(defface org-show-page-info
+(defface org-slideboard-page-info
   '((t :inherit org-document-info :height 1.0 :slant italic))
   "Face for the author and date on the title page."
-  :group 'org)
+  :group 'org-slideboard)
 
-(defface org-show-page-section
+(defface org-slideboard-page-section
   '((t :inherit org-level-1 :height 1.0 :weight bold))
   "Face for the heading on a section page."
-  :group 'org)
+  :group 'org-slideboard)
 
-(defvar org-show-current-slide-number 1
+(defvar org-slideboard-current-slide-number 1
   "Holds current slide number.")
 
-(defvar org-show-mogrify-p
-  (executable-find "mogrify")
-  "Determines if images are mogrified (changed size in presentation mode.")
-
-(when org-show-mogrify-p
-  (ignore-errors (require 'eimp)))
-
-(defvar org-show-tags-column -60
-  "Column position to move tags to in slide mode.")
-
-(defvar org-show-original-tags-column org-tags-column
-  "Save value so we can change back to it.")
-
-(defvar *org-show-flyspell-mode* nil
+(defvar org-slideboard--flyspell nil
   "Whether flyspell mode is enabled at beginning of show.
 Used to reset the state after the show.")
 
-(defvar *org-show-running* nil
+(defvar org-slideboard--running nil
   "Flag for if the show is running.")
 
-(defvar org-show-slide-list '()
+(defvar org-slideboard-slide-list '()
   "List of slide numbers and markers to each slide.")
 
-(defvar org-show-slide-titles '()
+(defvar org-slideboard-slide-titles '()
   "List of titles and slide numbers for each slide.")
 
-(defvar org-show--column-buffers '()
+(defvar org-slideboard--column-buffers '()
   "Indirect buffers created to display beamer columns.")
 
-(defvar org-show--hide-overlays '()
+(defvar org-slideboard--hide-overlays '()
   "Overlays created to hide clutter during the show.")
 
-(defvar org-show--windows '()
+(defvar org-slideboard--windows '()
   "Windows whose mode-line was hidden for a column layout.")
 
-(defvar org-show-mode)
+(defvar org-slideboard-mode)
 (declare-function flyspell-mode-on "flyspell")
 (declare-function flyspell-mode-off "flyspell")
 
 ;;* Functions
-(defvar org-show-temp-images '() "List of temporary images.")
-
-(defun org-show--base-buffer ()
+(defun org-slideboard--base-buffer ()
   "Return the base buffer of the current buffer."
   (or (buffer-base-buffer) (current-buffer)))
 
-(defun org-show--show-buffer ()
+(defun org-slideboard--show-buffer ()
   "Return the buffer of the presentation being shown.
 This is where the settings are read, since they may be local to it."
-  (or (and org-show-presentation-file
-           (find-buffer-visiting org-show-presentation-file))
-      (org-show--base-buffer)))
+  (or (and org-slideboard-presentation-file
+           (find-buffer-visiting org-slideboard-presentation-file))
+      (org-slideboard--base-buffer)))
 
-(defun org-show--file ()
+(defun org-slideboard--file ()
   "Return the file of the presentation in the current buffer."
-  (buffer-file-name (org-show--base-buffer)))
+  (buffer-file-name (org-slideboard--base-buffer)))
 
 ;;** Clutter hiding
 
-(defun org-show--hide-region (beg end)
+(defun org-slideboard--hide-region (beg end)
   "Make the region BEG END invisible during the show."
   (let ((ov (make-overlay beg end nil t nil)))
-    (overlay-put ov 'invisible 'org-show)
+    (overlay-put ov 'invisible 'org-slideboard)
     (overlay-put ov 'evaporate t)
-    (push ov org-show--hide-overlays)))
+    (push ov org-slideboard--hide-overlays)))
 
-(defun org-show--hide-clutter (beg end)
+(defun org-slideboard--hide-clutter (beg end)
   "Hide beamer and babel clutter between BEG and END."
-  (when org-show-hide-clutter
-    (add-to-invisibility-spec 'org-show)
+  (when org-slideboard-hide-clutter
+    (add-to-invisibility-spec 'org-slideboard)
     (let ((case-fold-search t))
       (save-excursion
         ;; property drawers
@@ -393,24 +452,24 @@ This is where the settings are read, since they may be local to it."
         (while (re-search-forward
                 "^[ \t]*:PROPERTIES:[ \t]*\n\\(?:.*\n\\)*?[ \t]*:END:[ \t]*\n?"
                 end t)
-          (org-show--hide-region (match-beginning 0) (match-end 0)))
+          (org-slideboard--hide-region (match-beginning 0) (match-end 0)))
         ;; keyword lines
         (goto-char beg)
         (while (re-search-forward
                 "^[ \t]*#\\+\\(?:name\\|results\\|caption\\|attr_[a-z]+\\)\\(?:\\[.*\\]\\)?:.*\n?"
                 end t)
-          (org-show--hide-region (match-beginning 0) (match-end 0)))
+          (org-slideboard--hide-region (match-beginning 0) (match-end 0)))
         ;; standalone raw LaTeX lines, e.g. \vspace{-0.5cm}, but not
         ;; lines of an equation
         (goto-char beg)
         (while (re-search-forward "^[ \t]*\\(\\\\[a-zA-Z]+\\).*\n?" end t)
           (unless (save-excursion
                     (save-match-data
-                      (org-show--math-p
+                      (org-slideboard--math-p
                        (org-element-context
                         (progn (goto-char (match-beginning 1))
                                (org-element-at-point))))))
-            (org-show--hide-region (match-beginning 0) (match-end 0))))
+            (org-slideboard--hide-region (match-beginning 0) (match-end 0))))
         ;; src blocks that are not exported as code
         (goto-char beg)
         (while (re-search-forward "^[ \t]*#\\+begin_src\\b" end t)
@@ -422,9 +481,9 @@ This is where the settings are read, since they may be local to it."
                               (when (re-search-forward "^[ \t]*#\\+end_src.*\n?" end t)
                                 (match-end 0)))))
             (when (and block-end
-                       (or (memq (org-show--src-mode info) '(results none))
-                           (equal (car info) "emacs-lisp-slide")))
-              (org-show--hide-region block-beg block-end))
+                       (or (memq (org-slideboard--src-mode info) '(results none))
+                           (equal (car info) "slideboard-elisp")))
+              (org-slideboard--hide-region block-beg block-end))
             (when block-end (goto-char block-end))))
         ;; blank lines left at the top once the clutter is hidden
         (goto-char beg)
@@ -433,11 +492,11 @@ This is where the settings are read, since they may be local to it."
                         (memq (char-after) '(?\s ?\t ?\n))))
           (forward-char 1))
         (when (> (line-beginning-position) beg)
-          (org-show--hide-region beg (line-beginning-position)))))))
+          (org-slideboard--hide-region beg (line-beginning-position)))))))
 
 ;;** Beamer columns
 
-(defun org-show--slide-columns ()
+(defun org-slideboard--slide-columns ()
   "Return the beamer columns of the slide at point.
 Each element is (WIDTH HEAD-BEG BODY-BEG BODY-END).  Columns are
 direct children with a BEAMER_col property or a BMCOL tag."
@@ -466,38 +525,38 @@ direct children with a BEAMER_col property or a BMCOL tag."
           (when (<= (car c) 0) (setcar c (/ 1.0 n)))))
       cols)))
 
-(defvar org-show--image-times (make-hash-table :test #'equal)
+(defvar org-slideboard--image-times (make-hash-table :test #'equal)
   "Modification times of the image files shown, by file name.")
 
-(defun org-show--fresh-image-file (file)
+(defun org-slideboard--fresh-image-file (file)
   "Make sure FILE is shown as it is now, not as Emacs cached it.
 Emacs caches images by file name, so a plot rewritten by a code
 block would still show the old picture.  When FILE changed since it
 was last shown, it is removed from the image cache."
   (let ((time (file-attribute-modification-time (file-attributes file)))
-        (old (gethash file org-show--image-times)))
+        (old (gethash file org-slideboard--image-times)))
     (when (and old (not (equal old time)))
       (clear-image-cache file))
-    (puthash file time org-show--image-times)))
+    (puthash file time org-slideboard--image-times)))
 
-(defun org-show--show-images (&optional win)
+(defun org-slideboard--show-images (&optional win)
   "Display image links in the accessible part of the current buffer.
 Images are scaled down to fit in window WIN (default: the selected
-window), using `org-show-image-width-fraction' and
-`org-show-image-height-fraction'.  The images are drawn with our own
+window), using `org-slideboard-image-width-fraction' and
+`org-slideboard-image-height-fraction'.  The images are drawn with our own
 high-priority overlays, so they do not depend on (and override) the
-Org or scimax inline image settings.  Image files that changed since
+Org inline image settings.  Image files that changed since
 they were last shown are read again."
   (let* ((win (or win (selected-window)))
-         (max-w (floor (* org-show-image-width-fraction (window-body-width win t))))
-         (max-h (floor (* org-show-image-height-fraction (window-body-height win t)))))
+         (max-w (floor (* org-slideboard-image-width-fraction (window-body-width win t))))
+         (max-h (floor (* org-slideboard-image-height-fraction (window-body-height win t)))))
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward "\\[\\[\\(?:file:\\)?\\([^]\n]+\\)\\]\\]" nil t)
         (let ((file (expand-file-name (match-string-no-properties 1))))
           (when (and (string-match-p (image-file-name-regexp) file)
                      (file-exists-p file))
-            (org-show--fresh-image-file file)
+            (org-slideboard--fresh-image-file file)
             (let ((ov (make-overlay (match-beginning 0) (match-end 0) nil t nil)))
               (overlay-put ov 'display (create-image file nil nil
                                                      :max-width max-w
@@ -507,10 +566,10 @@ they were last shown are read again."
               ;; property, and a display spec on invisible text is not
               ;; shown.  A non-nil overlay value that is not in the
               ;; invisibility spec takes precedence and keeps it visible.
-              (overlay-put ov 'invisible 'org-show-image)
-              (push ov org-show--hide-overlays))))))))
+              (overlay-put ov 'invisible 'org-slideboard-image)
+              (push ov org-slideboard--hide-overlays))))))))
 
-(defun org-show--reflow ()
+(defun org-slideboard--reflow ()
   "Display hard-wrapped paragraphs in the accessible region as one line.
 Line breaks inside a paragraph are shown as spaces, so that
 `visual-line-mode' can wrap the text to the window, as LaTeX would.
@@ -537,9 +596,9 @@ Display equations (\\=\\[...\\] and $$...$$) keep their own lines."
                                        math)))
                 (let ((ov (make-overlay (match-beginning 0) (match-end 0) nil t nil)))
                   (overlay-put ov 'display " ")
-                  (push ov org-show--hide-overlays))))))))))
+                  (push ov org-slideboard--hide-overlays))))))))))
 
-(defun org-show--list-depth (item)
+(defun org-slideboard--list-depth (item)
   "Return the nesting depth of list ITEM, 0 for a top-level item."
   (let ((depth -1)
         (p (org-element-property :parent item)))
@@ -549,19 +608,19 @@ Display equations (\\=\\[...\\] and $$...$$) keep their own lines."
       (setq p (org-element-property :parent p)))
     (max depth 0)))
 
-(defun org-show--style-lists ()
+(defun org-slideboard--style-lists ()
   "Lay out the plain lists in the accessible region for the show.
-Unordered bullets are replaced by `org-show-list-bullets' according
-to their depth, and with `org-show-hanging-indent', items are
-indented by `org-show-list-indent' spaces per level and their
+Unordered bullets are replaced by `org-slideboard-list-bullets' according
+to their depth, and with `org-slideboard-hanging-indent', items are
+indented by `org-slideboard-list-indent' spaces per level and their
 wrapped lines are aligned under the item text.  Everything is done
 with overlays, so the buffer text is not changed."
-  (when (or org-show-list-bullets org-show-hanging-indent)
+  (when (or org-slideboard-list-bullets org-slideboard-hanging-indent)
     (let ((bg (face-background 'default nil t)))
       (org-element-map (org-element-parse-buffer) 'item
         (lambda (item)
           (save-excursion
-            (let* ((depth (org-show--list-depth item))
+            (let* ((depth (org-slideboard--list-depth item))
                    (begin (org-element-property :begin item))
                    (end (org-element-property :end item))
                    (ordered (eq (org-element-property
@@ -576,7 +635,7 @@ with overlays, so the buffer text is not changed."
                    (text-beg (progn (goto-char bullet-end)
                                     (skip-chars-forward " \t")
                                     (point)))
-                   (bullets org-show-list-bullets)
+                   (bullets org-slideboard-list-bullets)
                    (new-bullet
                     (when (and bullets (not ordered))
                       (let ((b (nth (mod depth (length bullets)) bullets)))
@@ -584,27 +643,27 @@ with overlays, so the buffer text is not changed."
                         (when (consp b) (setq b (cdr b)))
                         (if (get-text-property 0 'face b)
                             b
-                          (propertize b 'face 'org-show-bullet)))))
+                          (propertize b 'face 'org-slideboard-bullet)))))
                    (bullet (or new-bullet
                                (buffer-substring bullet-beg bullet-end)))
-                   (indent (if org-show-hanging-indent
-                               (make-string (* depth org-show-list-indent) ?\s)
+                   (indent (if org-slideboard-hanging-indent
+                               (make-string (* depth org-slideboard-list-indent) ?\s)
                              (buffer-substring-no-properties begin bullet-beg)))
                    ov)
               ;; indentation (a zero-width overlay when there is none)
               (setq ov (make-overlay begin bullet-beg nil t nil))
               (overlay-put ov (if (= begin bullet-beg) 'before-string 'display)
                            indent)
-              (push ov org-show--hide-overlays)
+              (push ov org-slideboard--hide-overlays)
               ;; bullet
               (when new-bullet
                 (setq ov (make-overlay bullet-beg bullet-end nil t nil))
                 (overlay-put ov 'display new-bullet)
-                (push ov org-show--hide-overlays))
+                (push ov org-slideboard--hide-overlays))
               ;; wrapped lines start under the item text: the prefix is the
               ;; indentation, an invisible copy of the bullet (same width)
               ;; and the space after it
-              (when org-show-hanging-indent
+              (when org-slideboard-hanging-indent
                 (let ((ghost (if (and bg (not (string-prefix-p "unspecified" bg)))
                                  (propertize (substring-no-properties bullet)
                                              'face (list (list :foreground bg)
@@ -617,22 +676,22 @@ with overlays, so the buffer text is not changed."
                                        (buffer-substring-no-properties bullet-end text-beg)))
                   ;; nested items lie inside their parent's overlay
                   (overlay-put ov 'priority (+ 10 depth))
-                  (push ov org-show--hide-overlays))))))))))
+                  (push ov org-slideboard--hide-overlays))))))))))
 
-(defun org-show--org-images ()
+(defun org-slideboard--org-images ()
   "Redisplay Org inline images in the current buffer the normal way."
   (if (fboundp 'org-link-preview-region)
       (org-link-preview-region nil t (point-min) (point-max))
     (with-no-warnings
       (org-display-inline-images nil t (point-min) (point-max)))))
 
-(defun org-show--fits-p (win)
+(defun org-slideboard--fits-p (win)
   "Return non-nil if the text of WIN fits in it without scrolling."
   (with-current-buffer (window-buffer win)
     (<= (cdr (window-text-pixel-size win (point-min) (point-max)))
         (window-body-height win t))))
 
-(defun org-show--fit-text (wins scale)
+(defun org-slideboard--fit-text (wins scale)
   "Give the buffers of WINS the largest text scale <= SCALE at which they fit.
 All windows get the same scale.  Return the scale used."
   (setq scale (or scale 0))
@@ -640,15 +699,15 @@ All windows get the same scale.  Return the scale used."
    do (dolist (w wins)
         (with-current-buffer (window-buffer w)
           (text-scale-set scale)
-          (org-show--scale-latex w)
-          (org-show--align-tables w)))
-   until (or (not org-show-fit-text)
-             (<= scale org-show-min-text-scale)
-             (cl-every #'org-show--fits-p wins))
+          (org-slideboard--scale-latex w)
+          (org-slideboard--align-tables w)))
+   until (or (not org-slideboard-fit-text)
+             (<= scale org-slideboard-min-text-scale)
+             (cl-every #'org-slideboard--fits-p wins))
    do (setq scale (1- scale)))
   scale)
 
-(defun org-show--math-p (el)
+(defun org-slideboard--math-p (el)
   "Return non-nil if Org element EL is an equation.
 That is a LaTeX environment or a math fragment ($...$, \\(...\\),
 \\=\\[...\\] or $$...$$), not a LaTeX command such as \\vspace{...}."
@@ -658,19 +717,19 @@ That is a LaTeX environment or a math fragment ($...$, \\(...\\),
      (string-match-p "\\`\\(?:\\$\\|\\\\[[(]\\)"
                      (org-element-property :value el)))))
 
-(defun org-show--latex-overlays ()
+(defun org-slideboard--latex-overlays ()
   "Return the LaTeX preview overlays in the accessible part of the buffer."
   (cl-remove-if-not
    (lambda (o) (eq (overlay-get o 'org-overlay-type) 'org-latex-overlay))
    (overlays-in (point-min) (point-max))))
 
-(defun org-show--latex-preview-header ()
+(defun org-slideboard--latex-preview-header ()
   "Return the preamble for previewing equations in the current buffer.
 It is the preamble Org would use, without the lines matching
-`org-show-latex-preview-drop-regexp'.  Return nil when nothing needs
+`org-slideboard-latex-preview-drop-regexp'.  Return nil when nothing needs
 to be left out, or when the process in
 `org-preview-latex-default-process' has its own preamble."
-  (when (and org-show-latex-preview-drop-regexp
+  (when (and org-slideboard-latex-preview-drop-regexp
              (not (plist-get (cdr (assq org-preview-latex-default-process
                                         org-preview-latex-process-alist))
                              :latex-header))
@@ -682,19 +741,19 @@ to be left out, or when the process in
                     'snippet)))
            (header (and full
                         (replace-regexp-in-string
-                         (concat org-show-latex-preview-drop-regexp "\n?")
+                         (concat org-slideboard-latex-preview-drop-regexp "\n?")
                          "" full))))
       (unless (equal header full) header))))
 
-(defun org-show--preview-latex ()
+(defun org-slideboard--preview-latex ()
   "Preview LaTeX math in the accessible part of the current buffer.
-The images are rendered at `org-show-latex-scale', centered if they
+The images are rendered at `org-slideboard-latex-scale', centered if they
 are display equations, and sized to the text by
-`org-show--scale-latex'."
+`org-slideboard--scale-latex'."
   (when (save-excursion
           (goto-char (point-min))
           (re-search-forward "\\$\\|\\\\(\\|\\\\\\[\\|\\\\begin{" nil t))
-    (let* ((header (org-show--latex-preview-header))
+    (let* ((header (org-slideboard--latex-preview-header))
            (proc org-preview-latex-default-process)
            (org-preview-latex-process-alist
             (if header
@@ -705,39 +764,39 @@ are display equations, and sized to the text by
               org-preview-latex-process-alist))
            (org-format-latex-options
             (plist-put (plist-put (copy-sequence org-format-latex-options)
-                                  :scale org-show-latex-scale)
+                                  :scale org-slideboard-latex-scale)
                        ;; Org's image cache ignores the #+LATEX_HEADER
                        ;; lines, so make images with another preamble
                        ;; get other file names
-                       :org-show-header (and header (sha1 header)))))
+                       :org-slideboard-header (and header (sha1 header)))))
       (ignore-errors
         (if (fboundp 'org-latex-preview)
             (org-latex-preview '(16))
           (with-no-warnings (org-preview-latex-fragment '(4)))))
-      (setq org-show--latex-point
-            (org-show--measure-latex-point
-             (list proc org-show-latex-scale (and header (sha1 header))))))
+      (setq org-slideboard--latex-point
+            (org-slideboard--measure-latex-point
+             (list proc org-slideboard-latex-scale (and header (sha1 header))))))
     ;; an environment's overlay starts at its #+NAME: etc. lines, which
     ;; may be hidden as clutter, and a hidden start hides the image
-    (dolist (ov (org-show--latex-overlays))
+    (dolist (ov (org-slideboard--latex-overlays))
       (save-excursion
         (goto-char (overlay-start ov))
         (while (looking-at "[ \t]*#\\+.*\n") (goto-char (match-end 0)))
         (when (< (overlay-start ov) (point) (overlay-end ov))
           (move-overlay ov (point) (overlay-end ov)))))
-    (org-show--center-latex)
-    (org-show--scale-latex)))
+    (org-slideboard--center-latex)
+    (org-slideboard--scale-latex)))
 
-(defun org-show--measure-latex-point (key)
+(defun org-slideboard--measure-latex-point (key)
   "Return the pixels per LaTeX point in preview images made now.
 It is measured once for each KEY by previewing a 10pt square with the
-current preview settings, and cached in `org-show--latex-point-pixels'."
-  (or (cdr (assoc key org-show--latex-point-pixels))
+current preview settings, and cached in `org-slideboard--latex-point-pixels'."
+  (or (cdr (assoc key org-slideboard--latex-point-pixels))
       (let* ((proc org-preview-latex-default-process)
              (type (or (plist-get (cdr (assq proc org-preview-latex-process-alist))
                                   :image-output-type)
                        "png"))
-             (file (make-temp-file "org-show-ltx" nil (concat "." type)))
+             (file (make-temp-file "org-slideboard-ltx" nil (concat "." type)))
              (height (ignore-errors
                        (org-create-formula-image "$\\rule{10pt}{10pt}$" file
                                                  org-format-latex-options
@@ -745,46 +804,46 @@ current preview settings, and cached in `org-show--latex-point-pixels'."
                        (cdr (image-size (create-image file nil nil :scale 1) t)))))
         (ignore-errors (delete-file file))
         (when (and (numberp height) (> height 0))
-          (push (cons key (/ height 10.0)) org-show--latex-point-pixels)
+          (push (cons key (/ height 10.0)) org-slideboard--latex-point-pixels)
           (/ height 10.0)))))
 
-(defun org-show--latex-display-scale ()
+(defun org-slideboard--latex-display-scale ()
   "Return the image scale that sizes LaTeX previews to the current text.
 The 10pt LaTeX font is matched to the text font: 12pt, the LaTeX line
 spacing, is shown as high as a line of text.  This follows the text
-scale and `variable-pitch-mode'.  `org-show-latex-size' scales the
+scale and `variable-pitch-mode'.  `org-slideboard-latex-size' scales the
 result.  If the preview size could not be measured, fall back to
 `org-format-latex-options' :scale at text scale 0."
-  (* org-show-latex-size
-     (if org-show--latex-point
-         (/ (default-font-height) 12.0 org-show--latex-point)
+  (* org-slideboard-latex-size
+     (if org-slideboard--latex-point
+         (/ (default-font-height) 12.0 org-slideboard--latex-point)
        (* (/ (float (or (plist-get org-format-latex-options :scale) 1.0))
-             org-show-latex-scale)
+             org-slideboard-latex-scale)
           (expt text-scale-mode-step text-scale-mode-amount)))))
 
-(defun org-show--center-string (image)
+(defun org-slideboard--center-string (image)
   "Return a string that moves IMAGE to the center of the window."
   (propertize " " 'display `(space :align-to (- center (0.5 . ,image)))))
 
-(defun org-show--scale-latex (&optional win)
+(defun org-slideboard--scale-latex (&optional win)
   "Size the LaTeX previews in the accessible region to the current text.
-See `org-show--latex-display-scale'.  Images are also kept within the
+See `org-slideboard--latex-display-scale'.  Images are also kept within the
 width of window WIN (default: the selected window), since LaTeX
 environments with equation numbers are as wide as a LaTeX page."
-  (let ((scale (org-show--latex-display-scale))
+  (let ((scale (org-slideboard--latex-display-scale))
         (max-w (window-body-width (or win (selected-window)) t)))
-    (dolist (ov (org-show--latex-overlays))
+    (dolist (ov (org-slideboard--latex-overlays))
       (let ((spec (overlay-get ov 'display))
-            (center (overlay-get ov 'org-show-center)))
+            (center (overlay-get ov 'org-slideboard-center)))
         (when (eq (car-safe spec) 'image)
           (let ((props (copy-sequence (cdr spec))))
             (setq props (plist-put props :scale scale))
             (setq spec (cons 'image (plist-put props :max-width max-w))))
           (overlay-put ov 'display spec)
           (when (and center (overlay-buffer center))
-            (overlay-put center 'before-string (org-show--center-string spec))))))))
+            (overlay-put center 'before-string (org-slideboard--center-string spec))))))))
 
-(defun org-show--display-math-p (ov)
+(defun org-slideboard--display-math-p (ov)
   "Return non-nil if LaTeX preview overlay OV is a display equation.
 That is a LaTeX environment, or \\=\\[...\\] or $$...$$ on lines of its
 own."
@@ -798,40 +857,40 @@ own."
                     (skip-chars-forward " \t")
                     (eolp))))))
 
-(defun org-show--center-latex ()
+(defun org-slideboard--center-latex ()
   "Center the display equations in the accessible region.
 Each gets an overlay whose `before-string' aligns the image to the
-center of the window; `org-show--scale-latex' keeps it up to date
+center of the window; `org-slideboard--scale-latex' keeps it up to date
 when the image is resized."
-  (when org-show-center-display-math
-    (dolist (ov (org-show--latex-overlays))
+  (when org-slideboard-center-display-math
+    (dolist (ov (org-slideboard--latex-overlays))
       (when (and (eq (car-safe (overlay-get ov 'display)) 'image)
-                 (org-show--display-math-p ov))
+                 (org-slideboard--display-math-p ov))
         (let ((center (make-overlay (overlay-start ov) (overlay-end ov) nil t nil)))
           (overlay-put center 'before-string
-                       (org-show--center-string (overlay-get ov 'display)))
-          (overlay-put ov 'org-show-center center)
-          (push center org-show--hide-overlays))))))
+                       (org-slideboard--center-string (overlay-get ov 'display)))
+          (overlay-put ov 'org-slideboard-center center)
+          (push center org-slideboard--hide-overlays))))))
 
-(defun org-show--hide-drawers ()
+(defun org-slideboard--hide-drawers ()
   "Fold drawers in the accessible part of the current buffer."
   (if (fboundp 'org-fold-hide-drawer-all)
       (org-fold-hide-drawer-all)
     (org-cycle-hide-drawers 'all)))
 
-(defun org-show--hide-mode-line (win)
+(defun org-slideboard--hide-mode-line (win)
   "Hide the mode line of WIN for the column layout."
   (set-window-parameter win 'mode-line-format 'none)
-  (push win org-show--windows))
+  (push win org-slideboard--windows))
 
-(defun org-show--setup-column-window (win base col i)
+(defun org-slideboard--setup-column-window (win base col i)
   "Show column COL of buffer BASE in window WIN.
 I is the column index, used to name the indirect buffer."
   (let ((buf (make-indirect-buffer
-              base (generate-new-buffer-name (format "*org-show-col-%d*" i)) t)))
-    (push buf org-show--column-buffers)
+              base (generate-new-buffer-name (format "*org-slideboard-col-%d*" i)) t)))
+    (push buf org-slideboard--column-buffers)
     (set-window-buffer win buf)
-    (org-show--hide-mode-line win)
+    (org-slideboard--hide-mode-line win)
     (with-selected-window win
       ;; the clone shares the base buffer's face remapping list, so text
       ;; scaling here would undo the title's text scale
@@ -843,25 +902,25 @@ I is the column index, used to name the indirect buffer."
       (narrow-to-region (nth 2 col) (nth 3 col))
       ;; the clone copied the base buffer's mode variables, but the face
       ;; remapping was reset above, so apply the beautify modes afresh
-      (setq org-show--beautified nil
-            org-show--disabled nil
-            org-show--table-overlays nil)
+      (setq org-slideboard--beautified nil
+            org-slideboard--disabled nil
+            org-slideboard--table-overlays nil)
       (kill-local-variable 'buffer-face-mode)
-      (org-show--beautify)
+      (org-slideboard--beautify)
       (goto-char (point-min))
       (visual-line-mode 1)
-      (org-show--hide-clutter (point-min) (point-max))
-      (org-show--hide-drawers)
-      (org-show--reflow)
-      (org-show--expand-macros)
-      (org-show--style-lists)
-      (org-show--preview-latex)
-      (org-show--show-images win)
+      (org-slideboard--hide-clutter (point-min) (point-max))
+      (org-slideboard--hide-drawers)
+      (org-slideboard--reflow)
+      (org-slideboard--expand-macros)
+      (org-slideboard--style-lists)
+      (org-slideboard--preview-latex)
+      (org-slideboard--show-images win)
       (when (eq (nth 4 col) 'code)
-        (org-show-code-mode 1))
+        (org-slideboard-code-mode 1))
       (set-window-start win (point-min)))))
 
-(defun org-show--display-columns (cols &optional direction)
+(defun org-slideboard--display-columns (cols &optional direction)
   "Lay out the current slide with beamer columns COLS side by side.
 With DIRECTION below, the columns are stacked instead; this is used
 for code above its results.  The current buffer must be the base
@@ -876,15 +935,15 @@ buffer, narrowed to the slide."
     ;; the title strip: heading plus anything before the first column
     (narrow-to-region (point-min) title-end)
     ;; `or': an older `defvar' of this variable may have left it nil
-    (text-scale-set (or org-show-title-text-scale 2))
-    (org-show--hide-clutter (point-min) (point-max))
-    (org-show--hide-drawers)
-    (org-show--reflow)
-    (org-show--expand-macros)
-    (org-show--style-lists)
-    (org-show--preview-latex)
-    (org-show--align-tables title-win)
-    (org-show--hide-mode-line title-win)
+    (text-scale-set (or org-slideboard-title-text-scale 2))
+    (org-slideboard--hide-clutter (point-min) (point-max))
+    (org-slideboard--hide-drawers)
+    (org-slideboard--reflow)
+    (org-slideboard--expand-macros)
+    (org-slideboard--style-lists)
+    (org-slideboard--preview-latex)
+    (org-slideboard--align-tables title-win)
+    (org-slideboard--hide-mode-line title-win)
     (goto-char (point-min))
     ;; size the title strip first, so the column heights are final
     ;; before images are scaled and text is fitted
@@ -892,7 +951,7 @@ buffer, narrowed to the slide."
            (col-wins '())
            (i 1))
       (fit-window-to-buffer title-win (floor (window-total-height (frame-root-window)) 3) 1)
-      (with-selected-window title-win (org-show--show-images))
+      (with-selected-window title-win (org-slideboard--show-images))
       ;; the columns
       (let* ((below (eq direction 'below))
              (space (if below (window-total-height win) (window-total-width win))))
@@ -904,108 +963,108 @@ buffer, narrowed to the slide."
                              (max (if below window-min-height window-min-width)
                                   (round (* space (/ (car col) total))))
                              (if below 'below 'right)))))
-            (setq col-wins (append (org-show--setup-column win base col i) col-wins)
+            (setq col-wins (append (org-slideboard--setup-column win base col i) col-wins)
                   win next
                   cols (cdr cols)
                   i (1+ i)))))
-      (org-show--fit-text col-wins org-show-column-text-scale))
+      (org-slideboard--fit-text col-wins org-slideboard-column-text-scale))
     (select-window title-win)))
 
-(defun org-show--teardown-columns ()
+(defun org-slideboard--teardown-columns ()
   "Remove column windows, indirect buffers and clutter overlays."
-  (mapc #'delete-overlay org-show--hide-overlays)
-  (setq org-show--hide-overlays '())
-  (dolist (win org-show--windows)
+  (mapc #'delete-overlay org-slideboard--hide-overlays)
+  (setq org-slideboard--hide-overlays '())
+  (dolist (win org-slideboard--windows)
     (when (window-live-p win)
       (set-window-parameter win 'mode-line-format nil)))
-  (setq org-show--windows '())
-  (dolist (buf org-show--column-buffers)
+  (setq org-slideboard--windows '())
+  (dolist (buf org-slideboard--column-buffers)
     (when (buffer-live-p buf) (kill-buffer buf)))
-  (setq org-show--column-buffers '()))
+  (setq org-slideboard--column-buffers '()))
 
 ;;** Per-file settings
 
 ;; File-local variables: the simple settings are safe, so Emacs does not
 ;; ask about them.  The mode lists are not marked safe, since a file
 ;; could use them to turn on any mode.
-(dolist (var '(org-show-fit-text org-show-hide-clutter org-show-title-page
-               org-show-section-pages org-show-animate-pages
-               org-show-hanging-indent org-show-hide-emphasis-markers
-               org-show-hide-macro-markers org-show-expand-macros
-               org-show-align-tables
-               org-show-center-display-math))
+(dolist (var '(org-slideboard-fit-text org-slideboard-hide-clutter org-slideboard-title-page
+               org-slideboard-section-pages org-slideboard-animate-pages
+               org-slideboard-hanging-indent org-slideboard-hide-emphasis-markers
+               org-slideboard-hide-macro-markers org-slideboard-expand-macros
+               org-slideboard-align-tables
+               org-slideboard-center-display-math))
   (put var 'safe-local-variable #'booleanp))
-(dolist (var '(org-show-text-scale org-show-column-text-scale
-               org-show-title-text-scale org-show-min-text-scale
-               org-show-page-text-scale org-show-image-width-fraction
-               org-show-image-height-fraction org-show-list-indent
-               org-show-latex-size org-show-latex-scale
-               org-show-src-code-width))
+(dolist (var '(org-slideboard-text-scale org-slideboard-column-text-scale
+               org-slideboard-title-text-scale org-slideboard-min-text-scale
+               org-slideboard-page-text-scale org-slideboard-image-width-fraction
+               org-slideboard-image-height-fraction org-slideboard-list-indent
+               org-slideboard-latex-size org-slideboard-latex-scale
+               org-slideboard-src-code-width))
   (put var 'safe-local-variable #'numberp))
-(put 'org-show-src-display 'safe-local-variable #'org-show--src-display-p)
-(put 'org-show-src-split 'safe-local-variable #'org-show--src-split-p)
+(put 'org-slideboard-src-display 'safe-local-variable #'org-slideboard--src-display-p)
+(put 'org-slideboard-src-split 'safe-local-variable #'org-slideboard--src-split-p)
 
-(defun org-show--src-split-p (value)
-  "Return non-nil if VALUE is a valid `org-show-src-split'."
+(defun org-slideboard--src-split-p (value)
+  "Return non-nil if VALUE is a valid `org-slideboard-src-split'."
   (memq value '(left-right top-bottom)))
 
-(defun org-show--src-display-p (value)
-  "Return non-nil if VALUE is a valid `org-show-src-display'."
+(defun org-slideboard--src-display-p (value)
+  "Return non-nil if VALUE is a valid `org-slideboard-src-display'."
   (memq value '(exports results both)))
-(put 'org-show-list-bullets 'safe-local-variable #'org-show--string-list-p)
-(put 'org-show-slide-tag 'safe-local-variable #'stringp)
+(put 'org-slideboard-list-bullets 'safe-local-variable #'org-slideboard--string-list-p)
+(put 'org-slideboard-slide-tag 'safe-local-variable #'stringp)
 
-(defun org-show--string-list-p (value)
+(defun org-slideboard--string-list-p (value)
   "Return non-nil if VALUE is a list of strings."
   (and (listp value) (seq-every-p #'stringp value)))
 
-(defun org-show--mode-list-p (value)
+(defun org-slideboard--mode-list-p (value)
   "Return non-nil if VALUE is a list of mode symbols (names ending in -mode)."
   (and (listp value)
        (seq-every-p (lambda (m)
                       (and (symbolp m) (string-suffix-p "-mode" (symbol-name m))))
                     value)))
 
-(defconst org-show--keyword-settings
+(defconst org-slideboard--keyword-settings
   '(("modern" :mode org-modern-mode booleanp)
     ("variable-pitch" :mode variable-pitch-mode booleanp)
-    ("modes" org-show-beautify-modes org-show--mode-list-p)
-    ("disable" org-show-disable-modes org-show--mode-list-p)
-    ("emphasis" org-show-hide-emphasis-markers booleanp)
-    ("macro-markers" org-show-hide-macro-markers booleanp)
-    ("macros" org-show-expand-macros booleanp)
-    ("align-tables" org-show-align-tables booleanp)
-    ("src" org-show-src-display org-show--src-display-p)
-    ("code-width" org-show-src-code-width numberp)
-    ("src-split" org-show-src-split org-show--src-split-p)
-    ("bullets" org-show-list-bullets org-show--string-list-p)
-    ("list-indent" org-show-list-indent natnump)
-    ("hanging" org-show-hanging-indent booleanp)
-    ("title-page" org-show-title-page booleanp)
-    ("section-pages" org-show-section-pages booleanp)
-    ("animate" org-show-animate-pages booleanp)
-    ("page-scale" org-show-page-text-scale numberp)
-    ("text-scale" org-show-text-scale numberp)
-    ("column-scale" org-show-column-text-scale numberp)
-    ("title-scale" org-show-title-text-scale numberp)
-    ("min-scale" org-show-min-text-scale numberp)
-    ("fit" org-show-fit-text booleanp)
-    ("image-width" org-show-image-width-fraction numberp)
-    ("image-height" org-show-image-height-fraction numberp)
-    ("clutter" org-show-hide-clutter booleanp)
-    ("latex-size" org-show-latex-size numberp)
-    ("latex-scale" org-show-latex-scale numberp)
-    ("center-math" org-show-center-display-math booleanp))
-  "Keys of the #+ORG_SHOW: keyword.
+    ("modes" org-slideboard-beautify-modes org-slideboard--mode-list-p)
+    ("disable" org-slideboard-disable-modes org-slideboard--mode-list-p)
+    ("emphasis" org-slideboard-hide-emphasis-markers booleanp)
+    ("macro-markers" org-slideboard-hide-macro-markers booleanp)
+    ("macros" org-slideboard-expand-macros booleanp)
+    ("align-tables" org-slideboard-align-tables booleanp)
+    ("src" org-slideboard-src-display org-slideboard--src-display-p)
+    ("code-width" org-slideboard-src-code-width numberp)
+    ("src-split" org-slideboard-src-split org-slideboard--src-split-p)
+    ("bullets" org-slideboard-list-bullets org-slideboard--string-list-p)
+    ("list-indent" org-slideboard-list-indent natnump)
+    ("hanging" org-slideboard-hanging-indent booleanp)
+    ("title-page" org-slideboard-title-page booleanp)
+    ("section-pages" org-slideboard-section-pages booleanp)
+    ("animate" org-slideboard-animate-pages booleanp)
+    ("page-scale" org-slideboard-page-text-scale numberp)
+    ("text-scale" org-slideboard-text-scale numberp)
+    ("column-scale" org-slideboard-column-text-scale numberp)
+    ("title-scale" org-slideboard-title-text-scale numberp)
+    ("min-scale" org-slideboard-min-text-scale numberp)
+    ("fit" org-slideboard-fit-text booleanp)
+    ("image-width" org-slideboard-image-width-fraction numberp)
+    ("image-height" org-slideboard-image-height-fraction numberp)
+    ("clutter" org-slideboard-hide-clutter booleanp)
+    ("latex-size" org-slideboard-latex-size numberp)
+    ("latex-scale" org-slideboard-latex-scale numberp)
+    ("center-math" org-slideboard-center-display-math booleanp))
+  "Keys of the #+SLIDEBOARD: keyword.
 Each entry is (KEY VARIABLE PREDICATE), or (KEY :mode MODE PREDICATE)
 for a key that adds MODE to or removes it from
-`org-show-beautify-modes'.")
+`org-slideboard-beautify-modes'.")
 
-(defvar-local org-show--saved-settings nil
-  "Settings changed by #+ORG_SHOW:, as (VARIABLE LOCALP . OLD-VALUE).")
+(defvar-local org-slideboard--saved-settings nil
+  "Settings changed by #+SLIDEBOARD:, as (VARIABLE LOCALP . OLD-VALUE).")
 
-(defun org-show--parse-keyword (string)
-  "Parse STRING, the value of #+ORG_SHOW: lines, into (KEY . VALUE) pairs.
+(defun org-slideboard--parse-keyword (string)
+  "Parse STRING, the value of #+SLIDEBOARD: lines, into (KEY . VALUE) pairs.
 Values are read as Lisp, like the values of #+OPTIONS.  Pairs that
 cannot be read are skipped with a message."
   (let ((pos 0)
@@ -1018,111 +1077,111 @@ cannot be read are skipped with a message."
               (push (cons key (car read)) pairs)
               (setq pos (cdr read)))
           (error
-           (message "org-show: cannot read the value of %s: in #+ORG_SHOW:" key)
+           (message "org-slideboard: cannot read the value of %s: in #+SLIDEBOARD:" key)
            (setq pos (length string))))))
     (nreverse pairs)))
 
-(defun org-show--set-setting (var value)
+(defun org-slideboard--set-setting (var value)
   "Set VAR to VALUE in this buffer, recording its old state for restoring."
-  (unless (assq var org-show--saved-settings)
+  (unless (assq var org-slideboard--saved-settings)
     (push (cons var (cons (local-variable-p var) (symbol-value var)))
-          org-show--saved-settings))
+          org-slideboard--saved-settings))
   (set (make-local-variable var) value))
 
-(defun org-show--apply-keyword-settings ()
-  "Apply the #+ORG_SHOW: settings of the current buffer, locally.
-See `org-show--keyword-settings' for the keys.  Unknown keys and
+(defun org-slideboard--apply-keyword-settings ()
+  "Apply the #+SLIDEBOARD: settings of the current buffer, locally.
+See `org-slideboard--keyword-settings' for the keys.  Unknown keys and
 invalid values are skipped with a message."
-  (org-show--restore-keyword-settings)
+  (org-slideboard--restore-keyword-settings)
   (let ((value (mapconcat #'identity
-                          (cdr (assoc "ORG_SHOW" (org-collect-keywords '("ORG_SHOW"))))
+                          (cdr (assoc "SLIDEBOARD" (org-collect-keywords '("SLIDEBOARD"))))
                           " ")))
-    (dolist (pair (org-show--parse-keyword value))
+    (dolist (pair (org-slideboard--parse-keyword value))
       (let* ((key (car pair))
              (val (cdr pair))
-             (entry (assoc key org-show--keyword-settings)))
+             (entry (assoc key org-slideboard--keyword-settings)))
         (cond
          ((null entry)
-          (message "org-show: unknown #+ORG_SHOW: key %s" key))
+          (message "org-slideboard: unknown #+SLIDEBOARD: key %s" key))
          ((eq (nth 1 entry) :mode)
           (if (not (funcall (nth 3 entry) val))
-              (message "org-show: ignoring %s:%S" key val)
+              (message "org-slideboard: ignoring %s:%S" key val)
             (let ((mode (nth 2 entry)))
-              (org-show--set-setting
-               'org-show-beautify-modes
+              (org-slideboard--set-setting
+               'org-slideboard-beautify-modes
                (if val
-                   (append (remq mode org-show-beautify-modes) (list mode))
-                 (remq mode org-show-beautify-modes))))))
+                   (append (remq mode org-slideboard-beautify-modes) (list mode))
+                 (remq mode org-slideboard-beautify-modes))))))
          ((not (funcall (nth 2 entry) val))
-          (message "org-show: ignoring %s:%S" key val))
+          (message "org-slideboard: ignoring %s:%S" key val))
          (t
-          (org-show--set-setting (nth 1 entry) val)))))))
+          (org-slideboard--set-setting (nth 1 entry) val)))))))
 
-(defun org-show--restore-keyword-settings ()
-  "Undo `org-show--apply-keyword-settings' in the current buffer."
-  (dolist (saved org-show--saved-settings)
+(defun org-slideboard--restore-keyword-settings ()
+  "Undo `org-slideboard--apply-keyword-settings' in the current buffer."
+  (dolist (saved org-slideboard--saved-settings)
     (let ((var (car saved)))
       (if (cadr saved)
           (set (make-local-variable var) (cddr saved))
         (kill-local-variable var))))
-  (setq org-show--saved-settings nil))
+  (setq org-slideboard--saved-settings nil))
 
 ;;** Beautify modes
 
-(defun org-show--mode-on-p (mode)
+(defun org-slideboard--mode-on-p (mode)
   "Return non-nil if minor MODE is on in the current buffer."
   (if (eq mode 'variable-pitch-mode)
       ;; not a real minor mode; it works through `buffer-face-mode'
       (bound-and-true-p buffer-face-mode)
     (and (boundp mode) (symbol-value mode))))
 
-(defun org-show--beautify ()
-  "Turn on `org-show-beautify-modes' and marker hiding in this buffer.
+(defun org-slideboard--beautify ()
+  "Turn on `org-slideboard-beautify-modes' and marker hiding in this buffer.
 Only modes that are installed and not already on are turned on, and
-they are recorded so `org-show--unbeautify' can turn them off.
-Also turn off the modes in `org-show-disable-modes'."
-  (org-show--disable-modes)
-  (dolist (mode org-show-beautify-modes)
+they are recorded so `org-slideboard--unbeautify' can turn them off.
+Also turn off the modes in `org-slideboard-disable-modes'."
+  (org-slideboard--disable-modes)
+  (dolist (mode org-slideboard-beautify-modes)
     (ignore-errors
       (unless (fboundp mode)
         (require (intern (string-remove-suffix "-mode" (symbol-name mode))) nil t))
-      (when (and (fboundp mode) (not (org-show--mode-on-p mode)))
+      (when (and (fboundp mode) (not (org-slideboard--mode-on-p mode)))
         (when (eq mode 'org-modern-mode)
           ;; org-modern draws tags as labels, which shows part of the
           ;; hidden :slide: tag; tags are not wanted on slides anyway
           (setq-local org-modern-tag nil)
-          ;; org-show draws its own bullets, see `org-show--style-lists'
-          (when org-show-list-bullets
+          ;; org-slideboard draws its own bullets, see `org-slideboard--style-lists'
+          (when org-slideboard-list-bullets
             (setq-local org-modern-list nil)))
         (funcall mode 1)
-        (push mode org-show--beautified))))
-  (when (and org-show-hide-emphasis-markers
+        (push mode org-slideboard--beautified))))
+  (when (and org-slideboard-hide-emphasis-markers
              (not org-hide-emphasis-markers))
     (setq-local org-hide-emphasis-markers t)
-    (push 'org-hide-emphasis-markers org-show--beautified))
-  (when (and org-show-hide-macro-markers
+    (push 'org-hide-emphasis-markers org-slideboard--beautified))
+  (when (and org-slideboard-hide-macro-markers
              (not org-hide-macro-markers))
     (setq-local org-hide-macro-markers t)
-    (push 'org-hide-macro-markers org-show--beautified))
-  (when org-show--beautified
+    (push 'org-hide-macro-markers org-slideboard--beautified))
+  (when org-slideboard--beautified
     (font-lock-flush)))
 
-(defun org-show--disable-modes ()
-  "Turn off the modes in `org-show-disable-modes' in this buffer.
-They are recorded so `org-show--unbeautify' can turn them on again."
-  (dolist (mode org-show-disable-modes)
+(defun org-slideboard--disable-modes ()
+  "Turn off the modes in `org-slideboard-disable-modes' in this buffer.
+They are recorded so `org-slideboard--unbeautify' can turn them on again."
+  (dolist (mode org-slideboard-disable-modes)
     (ignore-errors
-      (when (and (fboundp mode) (org-show--mode-on-p mode))
+      (when (and (fboundp mode) (org-slideboard--mode-on-p mode))
         (funcall mode -1)
-        (push mode org-show--disabled)))))
+        (push mode org-slideboard--disabled)))))
 
-(defun org-show--unbeautify ()
-  "Undo `org-show--beautify' in this buffer."
-  (dolist (mode org-show--disabled)
+(defun org-slideboard--unbeautify ()
+  "Undo `org-slideboard--beautify' in this buffer."
+  (dolist (mode org-slideboard--disabled)
     (ignore-errors (funcall mode 1)))
-  (setq org-show--disabled nil)
-  (when org-show--beautified
-    (dolist (mode org-show--beautified)
+  (setq org-slideboard--disabled nil)
+  (when org-slideboard--beautified
+    (dolist (mode org-slideboard--beautified)
       (ignore-errors
         (if (memq mode '(org-hide-emphasis-markers org-hide-macro-markers))
             (kill-local-variable mode)
@@ -1130,18 +1189,18 @@ They are recorded so `org-show--unbeautify' can turn them on again."
           (when (eq mode 'org-modern-mode)
             (kill-local-variable 'org-modern-tag)
             (kill-local-variable 'org-modern-list)))))
-    (setq org-show--beautified nil)
+    (setq org-slideboard--beautified nil)
     (font-lock-flush)))
 
 ;;** Macros
 
-(defun org-show--macro-templates ()
+(defun org-slideboard--macro-templates ()
   "Return the macro templates for the show in the current buffer.
-See `org-show-expand-macros'.  Org's templates come from
+See `org-slideboard-expand-macros'.  Org's templates come from
 `org-macro-initialize-templates', without #+MACRO: definitions that
 evaluate Lisp: showing a presentation should not run code in it."
   (org-with-wide-buffer
-   (let* ((kw (org-collect-keywords '("ORG_SHOW_MACRO" "MACRO")))
+   (let* ((kw (org-collect-keywords '("SLIDEBOARD_MACRO" "MACRO")))
           (defs (lambda (key)
                   (delq nil
                         (mapcar (lambda (v)
@@ -1149,7 +1208,7 @@ evaluate Lisp: showing a presentation should not run code in it."
                                     (cons (match-string 1 v) (substring v (match-end 0)))))
                                 (cdr (assoc key kw))))))
           (show (cl-remove-if (lambda (d) (string-match-p "\\`(eval\\>" (cdr d)))
-                              (funcall defs "ORG_SHOW_MACRO")))
+                              (funcall defs "SLIDEBOARD_MACRO")))
           (eval-names (mapcar #'car
                               (cl-remove-if-not
                                (lambda (d) (string-match-p "\\`(eval\\>" (cdr d)))
@@ -1159,27 +1218,27 @@ evaluate Lisp: showing a presentation should not run code in it."
                  (cl-remove-if (lambda (d) (member-ignore-case (car d) eval-names))
                                org-macro-templates))))
      ;; `org-macro-expand' uses the first match
-     (append (reverse show) org-show-macro-templates org))))
+     (append (reverse show) org-slideboard-macro-templates org))))
 
-(defun org-show--strip-snippets (text)
-  "Return TEXT without export snippets for back-ends other than org-show.
-The contents of @@org-show:...@@ snippets are kept."
+(defun org-slideboard--strip-snippets (text)
+  "Return TEXT without export snippets for back-ends other than org-slideboard.
+The contents of @@slideboard:...@@ snippets are kept."
   (replace-regexp-in-string
    "@@\\([-A-Za-z0-9]+\\):\\(\\(?:.\\|\n\\)*?\\)@@"
    (lambda (m)
-     (if (string= (downcase (match-string 1 m)) "org-show")
+     (if (string= (downcase (match-string 1 m)) "slideboard")
          (match-string 2 m)
        ""))
    text t t))
 
-(defun org-show--macro-string (text templates)
+(defun org-slideboard--macro-string (text templates)
   "Return the expansion TEXT of a macro, as it should look on a slide.
 Export snippets for other back-ends are removed, the contents of
-@@org-show:...@@ snippets are kept, macros in TEXT are expanded with
+@@slideboard:...@@ snippets are kept, macros in TEXT are expanded with
 TEMPLATES, and the rest is fontified as Org text, keeping any faces
 TEXT already has."
-  (setq text (org-show--expand-macros-in-string
-              (org-show--strip-snippets text) templates 1))
+  (setq text (org-slideboard--expand-macros-in-string
+              (org-slideboard--strip-snippets text) templates 1))
   (if (or (string-empty-p (string-trim text))
           (text-property-not-all 0 (length text) 'face nil text))
       text
@@ -1198,19 +1257,19 @@ TEXT already has."
               (setq pos next)))
           (apply #'concat (nreverse parts)))))))
 
-(defun org-show--expand-macros ()
+(defun org-slideboard--expand-macros ()
   "Show the macros in the accessible region as their expansion.
-See `org-show-expand-macros'.  This is done with overlays, so the
+See `org-slideboard-expand-macros'.  This is done with overlays, so the
 buffer text is not changed."
-  (when org-show-expand-macros
+  (when org-slideboard-expand-macros
     (let ((templates nil) (initialized nil))
       (org-element-map (org-element-parse-buffer) 'macro
         (lambda (macro)
           (unless initialized
-            (setq templates (org-show--macro-templates)
+            (setq templates (org-slideboard--macro-templates)
                   initialized t))
           (let* ((value (ignore-errors (org-macro-expand macro templates)))
-                 (string (and value (org-show--macro-string value templates))))
+                 (string (and value (org-slideboard--macro-string value templates))))
             (when (and string (not (string-empty-p (string-trim string))))
               (let ((ov (make-overlay (org-element-property :begin macro)
                                       (- (org-element-property :end macro)
@@ -1221,16 +1280,16 @@ buffer text is not changed."
                 ;; `org-hide-macro-markers' makes the braces invisible,
                 ;; and a display spec on invisible text is not shown; an
                 ;; overlay value not in the invisibility spec wins
-                (overlay-put ov 'invisible 'org-show-macro)
-                (push ov org-show--hide-overlays)))))))))
+                (overlay-put ov 'invisible 'org-slideboard-macro)
+                (push ov org-slideboard--hide-overlays)))))))))
 
 ;;** Code and results
 
-(defun org-show--src-mode (info)
+(defun org-slideboard--src-mode (info)
   "Return how the source block with INFO is shown: code, results, both or none.
-INFO is from `org-babel-get-src-block-info'.  See `org-show-src-display'."
+INFO is from `org-babel-get-src-block-info'.  See `org-slideboard-src-display'."
   (let ((exports (or (cdr (assq :exports (nth 2 info))) "code"))
-        (setting (or org-show--slide-src org-show-src-display)))
+        (setting (or org-slideboard--slide-src org-slideboard-src-display)))
     (cond ((equal exports "none") 'none)
           ((eq setting 'results) 'results)
           ((eq setting 'both) 'both)
@@ -1238,11 +1297,11 @@ INFO is from `org-babel-get-src-block-info'.  See `org-show-src-display'."
           ((equal exports "both") 'both)
           (t 'code))))
 
-(defun org-show--slide-src-split (&optional with-text)
+(defun org-slideboard--slide-src-split (&optional with-text)
   "Return the code and results in the accessible region as two columns.
-The format is that of `org-show--slide-columns', with a fifth element,
+The format is that of `org-slideboard--slide-columns', with a fifth element,
 code, marking the code column.  Return nil unless the region has a
-source block to be shown with its results, see `org-show-src-display'.
+source block to be shown with its results, see `org-slideboard-src-display'.
 The first such block is split: the code, and its results with the
 rest of the region.  Text before the block is left out (it goes in
 the title strip), or with WITH-TEXT, shown above the code."
@@ -1254,8 +1313,8 @@ the title strip), or with WITH-TEXT, shown above the code."
                        (goto-char (org-element-property :post-affiliated block))
                        (ignore-errors (org-babel-get-src-block-info 'no-eval)))))
           (when (and info
-                     (not (equal (car info) "emacs-lisp-slide"))
-                     (eq (org-show--src-mode info) 'both))
+                     (not (equal (car info) "slideboard-elisp"))
+                     (eq (org-slideboard--src-mode info) 'both))
             (let* ((end (save-excursion
                           (goto-char (org-element-property :end block))
                           (skip-chars-backward " \t\n" beg)
@@ -1267,77 +1326,78 @@ the title strip), or with WITH-TEXT, shown above the code."
                               (save-excursion (goto-char res) (line-beginning-position))
                             end)))
               (throw 'found
-                     (list (list org-show-src-code-width
+                     (list (list org-slideboard-src-code-width
                                  beg (if with-text (point-min) beg) end 'code)
-                           (list (- 1.0 org-show-src-code-width)
+                           (list (- 1.0 org-slideboard-src-code-width)
                                  right right (point-max)))))))))
     nil))
 
-(defun org-show--src-split-direction (pos)
+(defun org-slideboard--src-split-direction (pos)
   "Return the direction to split code and results at POS: right or below.
-POS is a heading, of a slide or a beamer column; its ORG_SHOW_SRC_SPLIT
-property, or that of a heading above it, overrides `org-show-src-split'."
-  (let* ((prop (org-entry-get pos "ORG_SHOW_SRC_SPLIT" t))
-         (value (if prop (intern (downcase (string-trim prop))) org-show-src-split)))
-    (if (eq (if (org-show--src-split-p value) value org-show-src-split) 'top-bottom)
+POS is a heading, of a slide or a beamer column; its SLIDEBOARD_SRC_SPLIT
+property, or that of a heading above it, overrides `org-slideboard-src-split'."
+  (let* ((prop (org-entry-get pos "SLIDEBOARD_SRC_SPLIT" t))
+         (value (if prop (intern (downcase (string-trim prop))) org-slideboard-src-split)))
+    (if (eq (if (org-slideboard--src-split-p value) value org-slideboard-src-split) 'top-bottom)
         'below
       'right)))
 
-(defun org-show--src-setting (pos)
-  "Return the ORG_SHOW_SRC property at heading POS, or above it, as a symbol.
-Return nil if there is none or it is not valid, see `org-show-src-display'."
-  (let* ((v (org-with-wide-buffer (org-entry-get pos "ORG_SHOW_SRC" t)))
+(defun org-slideboard--src-setting (pos)
+  "Return the SLIDEBOARD_SRC property at heading POS, or above it.
+The value is returned as a symbol, or nil if there is none or it is
+not valid, see `org-slideboard-src-display'."
+  (let* ((v (org-with-wide-buffer (org-entry-get pos "SLIDEBOARD_SRC" t)))
          (sym (and v (intern (downcase (string-trim v))))))
-    (and (org-show--src-display-p sym) sym)))
+    (and (org-slideboard--src-display-p sym) sym)))
 
-(defun org-show--setup-column (win base col i)
+(defun org-slideboard--setup-column (win base col i)
   "Show column COL of buffer BASE in window WIN; return the windows used.
 If the column has code to be shown with its results, WIN is divided
 into a window for the code (with the column text before it) and one
-for the results, see `org-show-src-split'.  I is the column index.
-The column heading's ORG_SHOW_SRC property, if any, applies to it."
-  (let* ((org-show--slide-src (or (and (not (nth 4 col))
+for the results, see `org-slideboard-src-split'.  I is the column index.
+The column heading's SLIDEBOARD_SRC property, if any, applies to it."
+  (let* ((org-slideboard--slide-src (or (and (not (nth 4 col))
                                        (with-current-buffer base
-                                         (org-show--src-setting (nth 1 col))))
-                                  org-show--slide-src))
+                                         (org-slideboard--src-setting (nth 1 col))))
+                                  org-slideboard--slide-src))
          (inner (and (not (nth 4 col))
                     (with-current-buffer base
                       (save-restriction
                         (narrow-to-region (nth 2 col) (nth 3 col))
-                        (org-show--slide-src-split t))))))
+                        (org-slideboard--slide-src-split t))))))
     (if (not inner)
-        (progn (org-show--setup-column-window win base col i)
+        (progn (org-slideboard--setup-column-window win base col i)
                (list win))
       (let* ((dir (with-current-buffer base
                     (save-restriction
                       (widen)
-                      (org-show--src-split-direction (nth 1 col)))))
+                      (org-slideboard--src-split-direction (nth 1 col)))))
              (size (if (eq dir 'below)
                        (max window-min-height
                             (round (* (window-total-height win) (car (car inner)))))
                      (max window-min-width
                           (round (* (window-total-width win) (car (car inner)))))))
              (other (split-window win size dir)))
-        (org-show--setup-column-window win base (nth 0 inner) i)
-        (org-show--setup-column-window other base (nth 1 inner) i)
+        (org-slideboard--setup-column-window win base (nth 0 inner) i)
+        (org-slideboard--setup-column-window other base (nth 1 inner) i)
         (list win other)))))
 
-(defvar org-show-code-mode-map
+(defvar org-slideboard-code-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'org-show-execute-src-block)
+    (define-key map (kbd "C-c C-c") #'org-slideboard-execute-src-block)
     map)
-  "Keymap for `org-show-code-mode'.")
+  "Keymap for `org-slideboard-code-mode'.")
 
-(define-minor-mode org-show-code-mode
+(define-minor-mode org-slideboard-code-mode
   "Minor mode for the code side of a slide with code and results.
-\\{org-show-code-mode-map}"
+\\{org-slideboard-code-mode-map}"
   :lighter nil
-  :keymap org-show-code-mode-map)
+  :keymap org-slideboard-code-mode-map)
 
-(defvar org-show--executing nil
-  "Non-nil while `org-show-execute-src-block' runs a block.")
+(defvar org-slideboard--executing nil
+  "Non-nil while `org-slideboard-execute-src-block' runs a block.")
 
-(defun org-show-execute-src-block ()
+(defun org-slideboard-execute-src-block ()
   "Run the source block at point and show the slide with its new results.
 The block is run in the presentation buffer, as \\[org-ctrl-c-ctrl-c]
 would, so the results are written to the file as usual."
@@ -1349,40 +1409,40 @@ would, so the results are written to the file as usual."
       (re-search-forward "^[ \t]*#\\+begin_src\\b" nil t)
       (forward-line 1)))
   (let ((pos (point))
-        (base (org-show--base-buffer)))
+        (base (org-slideboard--base-buffer)))
     (with-current-buffer base
       (save-restriction
         (widen)
         (save-excursion
           (goto-char pos)
-          (let ((org-show--executing t))
+          (let ((org-slideboard--executing t))
             (org-babel-execute-src-block)))))
-    (org-show--refresh-slide pos)))
+    (org-slideboard--refresh-slide pos)))
 
-(defun org-show--refresh-slide (&optional code-pos)
+(defun org-slideboard--refresh-slide (&optional code-pos)
   "Show the current slide again, e.g. with new results.
 With CODE-POS, select the code window and put point there."
-  (when (and *org-show-running* org-show-presentation-file)
-    (org-show-goto-slide org-show-current-slide-number)
+  (when (and org-slideboard--running org-slideboard-presentation-file)
+    (org-slideboard-goto-slide org-slideboard-current-slide-number)
     (when code-pos
       (let ((win (cl-find-if (lambda (w)
-                               (buffer-local-value 'org-show-code-mode (window-buffer w)))
+                               (buffer-local-value 'org-slideboard-code-mode (window-buffer w)))
                              (window-list))))
         (when win
           (select-window win)
           (goto-char (max (point-min) (min code-pos (point-max)))))))))
 
-(defun org-show--after-execute ()
+(defun org-slideboard--after-execute ()
   "Show the slide again after a block of the presentation was run.
 For `org-babel-after-execute-hook' during the show."
-  (when (and *org-show-running* (not org-show--executing)
-             org-show-presentation-file
-             (equal (buffer-file-name (org-show--base-buffer))
-                    (expand-file-name org-show-presentation-file)))
-    (let ((pos (and org-show-code-mode (point))))
-      (run-at-time 0 nil #'org-show--refresh-slide pos))))
+  (when (and org-slideboard--running (not org-slideboard--executing)
+             org-slideboard-presentation-file
+             (equal (buffer-file-name (org-slideboard--base-buffer))
+                    (expand-file-name org-slideboard-presentation-file)))
+    (let ((pos (and org-slideboard-code-mode (point))))
+      (run-at-time 0 nil #'org-slideboard--refresh-slide pos))))
 
-(defun org-show--start-R ()
+(defun org-slideboard--start-R ()
   "Return the buffer of a running R process, started with ESS if needed."
   (or (cl-find-if (lambda (b)
                     (and (eq (buffer-local-value 'major-mode b) 'inferior-ess-r-mode)
@@ -1394,7 +1454,7 @@ For `org-babel-after-execute-hook' during the show."
             (let ((buf (R)))
               (if (bufferp buf) buf (current-buffer))))))))
 
-(defun org-show--start-python ()
+(defun org-slideboard--start-python ()
   "Return the buffer of a running Python shell, started if needed."
   (require 'python)
   (with-no-warnings
@@ -1404,11 +1464,11 @@ For `org-babel-after-execute-hook' during the show."
             ((bufferp proc) proc)
             (t (get-buffer "*Python*"))))))
 
-(defun org-show--src-repl (info)
+(defun org-slideboard--src-repl (info)
   "Return a REPL buffer for the source block with INFO, starting one if needed.
-See `org-show-src-repl-functions'."
+See `org-slideboard-src-repl-functions'."
   (let ((session (cdr (assq :session (nth 2 info))))
-        (fn (cdr (assoc-string (car info) org-show-src-repl-functions t))))
+        (fn (cdr (assoc-string (car info) org-slideboard-src-repl-functions t))))
     (ignore-errors
       (save-window-excursion
         (let ((buf (if (and session (not (equal session "none")))
@@ -1416,22 +1476,22 @@ See `org-show-src-repl-functions'."
                      (and fn (funcall fn)))))
           (and buf (get-buffer buf)))))))
 
-(defvar org-show--scaled-buffers '()
+(defvar org-slideboard--scaled-buffers '()
   "Buffers whose text scale was changed for editing during the show.")
 
 (defvar org-src--beg-marker)
 
-(defun org-show--src-edit-setup ()
+(defun org-slideboard--src-edit-setup ()
   "Show a block opened for editing during the show next to its REPL.
 For `org-src-mode-hook'."
-  (when (and org-src-mode *org-show-running*
+  (when (and org-src-mode org-slideboard--running
              (boundp 'org-src--beg-marker)
              (markerp org-src--beg-marker)
              (buffer-live-p (marker-buffer org-src--beg-marker))
-             org-show-presentation-file
+             org-slideboard-presentation-file
              (with-current-buffer (marker-buffer org-src--beg-marker)
-               (equal (buffer-file-name (org-show--base-buffer))
-                      (expand-file-name org-show-presentation-file))))
+               (equal (buffer-file-name (org-slideboard--base-buffer))
+                      (expand-file-name org-slideboard-presentation-file))))
     (let* ((edit (current-buffer))
            ;; local to the editing buffer, so read it here
            (marker org-src--beg-marker)
@@ -1439,15 +1499,15 @@ For `org-src-mode-hook'."
                    (save-excursion
                      (goto-char marker)
                      (ignore-errors (org-babel-get-src-block-info 'no-eval))))))
-      (add-hook 'kill-buffer-hook #'org-show--src-edit-done nil t)
+      (add-hook 'kill-buffer-hook #'org-slideboard--src-edit-done nil t)
       ;; lay out after Org has shown the editing buffer
-      (run-at-time 0 nil #'org-show--src-edit-layout edit info))))
+      (run-at-time 0 nil #'org-slideboard--src-edit-layout edit info))))
 
-(defun org-show--src-edit-layout (edit info)
+(defun org-slideboard--src-edit-layout (edit info)
   "Show the editing buffer EDIT on the left and the REPL for INFO on the right."
   (when (buffer-live-p edit)
-    (let ((repl (and info (org-show--src-repl info)))
-          (scale (or org-show-column-text-scale 0)))
+    (let ((repl (and info (org-slideboard--src-repl info)))
+          (scale (or org-slideboard-column-text-scale 0)))
       (with-current-buffer edit
         (text-scale-set scale)
         ;; ESS evaluates in `ess-local-process-name'
@@ -1460,26 +1520,26 @@ For `org-src-mode-hook'."
       (when repl
         (let ((win (split-window nil (max window-min-width
                                           (round (* (window-total-width)
-                                                    org-show-src-code-width)))
+                                                    org-slideboard-src-code-width)))
                                  'right)))
           (set-window-buffer win repl)
           (with-current-buffer repl
-            (unless (memq repl org-show--scaled-buffers)
-              (push repl org-show--scaled-buffers))
+            (unless (memq repl org-slideboard--scaled-buffers)
+              (push repl org-slideboard--scaled-buffers))
             (text-scale-set scale))
           (with-selected-window win (goto-char (point-max))))))))
 
-(defun org-show--src-edit-done ()
+(defun org-slideboard--src-edit-done ()
   "Show the slide again when the editing buffer is closed.
 For the buffer-local `kill-buffer-hook' of the editing buffer."
   (let ((pos (and (boundp 'org-src--beg-marker)
                   (markerp org-src--beg-marker)
                   (marker-position org-src--beg-marker))))
-    (run-at-time 0 nil #'org-show--refresh-slide pos)))
+    (run-at-time 0 nil #'org-slideboard--refresh-slide pos)))
 
 ;;** Tables
 
-(defun org-show--table-line-cells ()
+(defun org-slideboard--table-line-cells ()
   "Return the cells of the table line at point, as (BEG . END) pairs.
 BEG and END are just inside the separators around the cell: the |
 characters, and in a horizontal rule also the + characters."
@@ -1495,28 +1555,28 @@ characters, and in a horizontal rule also the + characters."
       (setq pos (nreverse pos))
       (cl-loop for (a b) on pos while b collect (cons (1+ a) b)))))
 
-(defun org-show--table-pad (beg end pixels &optional face)
+(defun org-slideboard--table-pad (beg end pixels &optional face)
   "Display the region BEG END as blank space PIXELS wide, in FACE."
   (when (< beg end)
     (let ((ov (make-overlay beg end nil t nil)))
       (overlay-put ov 'display `(space :width (,(max 0 pixels))))
       (overlay-put ov 'priority 1001)
       (when face (overlay-put ov 'face face))
-      (push ov org-show--table-overlays)
-      (push ov org-show--hide-overlays))))
+      (push ov org-slideboard--table-overlays)
+      (push ov org-slideboard--hide-overlays))))
 
-(defun org-show--align-tables (&optional win)
+(defun org-slideboard--align-tables (&optional win)
   "Align the Org tables in the accessible region to their display in WIN.
 WIN defaults to the selected window.  The width of each cell is
 measured as displayed, with expanded macros, equation images and the
 font in use, and the blanks around it are shown as space of the width
 that lines up the columns.  Cells that Org right-aligned (numbers) stay
 right-aligned.  Horizontal rules are drawn to the column widths.  See
-`org-show-align-tables'."
+`org-slideboard-align-tables'."
   (setq win (or win (selected-window)))
-  (mapc #'delete-overlay org-show--table-overlays)
-  (setq org-show--table-overlays nil)
-  (when org-show-align-tables
+  (mapc #'delete-overlay org-slideboard--table-overlays)
+  (setq org-slideboard--table-overlays nil)
+  (when org-slideboard-align-tables
     (org-element-map (org-element-parse-buffer) 'table
       (lambda (table)
         (when (eq (org-element-property :type table) 'org)
@@ -1532,7 +1592,7 @@ right-aligned.  Horizontal rules are drawn to the column widths.  See
                 (let* ((hline (looking-at-p "[ \t]*|-"))
                        (cells
                         (cl-loop
-                         for (b . e) in (org-show--table-line-cells)
+                         for (b . e) in (org-slideboard--table-line-cells)
                          for i from 0
                          collect
                          (let* ((cb (save-excursion (goto-char b)
@@ -1558,30 +1618,30 @@ right-aligned.  Horizontal rules are drawn to the column widths.  See
                  do (let ((col (gethash i widths 0)))
                       (cond
                        ((car row)
-                        (org-show--table-pad b e (+ col (* 2 spc))
+                        (org-slideboard--table-pad b e (+ col (* 2 spc))
                                              '(:inherit org-table :strike-through t)))
                        ((>= cb ce)
-                        (org-show--table-pad b e (+ col (* 2 spc))))
+                        (org-slideboard--table-pad b e (+ col (* 2 spc))))
                        ;; Org pads numbers on the left
                        ((> (- cb b) 1)
-                        (org-show--table-pad b cb (+ (- col w) spc))
-                        (org-show--table-pad ce e spc))
+                        (org-slideboard--table-pad b cb (+ (- col w) spc))
+                        (org-slideboard--table-pad ce e spc))
                        (t
-                        (org-show--table-pad b cb spc)
-                        (org-show--table-pad ce e (+ (- col w) spc))))))))))))))
+                        (org-slideboard--table-pad b cb spc)
+                        (org-slideboard--table-pad ce e (+ (- col w) spc))))))))))))))
 
 ;;** Title and section pages
 
-(defun org-show--expand-macros-in-string (string &optional templates depth)
-  "Return STRING with its Org macros expanded, see `org-show-expand-macros'.
+(defun org-slideboard--expand-macros-in-string (string &optional templates depth)
+  "Return STRING with its Org macros expanded, see `org-slideboard-expand-macros'.
 Macros in the expansions are expanded too, up to a few levels deep.
 Macros that cannot be expanded are removed.  TEMPLATES defaults to
-`org-show--macro-templates'; DEPTH is used for the recursion."
+`org-slideboard--macro-templates'; DEPTH is used for the recursion."
   (let ((depth (or depth 0)))
-    (if (or (not org-show-expand-macros) (> depth 5)
+    (if (or (not org-slideboard-expand-macros) (> depth 5)
             (not (string-match-p "{{{" string)))
         (replace-regexp-in-string "{{{\\(?:.\\|\n\\)*?}}}" "" string t t)
-      (let ((templates (or templates (org-show--macro-templates))))
+      (let ((templates (or templates (org-slideboard--macro-templates))))
         (replace-regexp-in-string
          "{{{\\([^}(]+\\)\\(?:(\\(\\(?:.\\|\n\\)*?\\))\\)?}}}"
          (lambda (m)
@@ -1592,19 +1652,19 @@ Macros that cannot be expanded are removed.  TEMPLATES defaults to
                            (org-macro-expand (list 'macro (list :key key :args args))
                                              templates))))
              (if value
-                 (org-show--expand-macros-in-string
-                  (org-show--strip-snippets value) templates (1+ depth))
+                 (org-slideboard--expand-macros-in-string
+                  (org-slideboard--strip-snippets value) templates (1+ depth))
                "")))
          string t t)))))
 
-(defun org-show--keyword-lines (value)
+(defun org-slideboard--keyword-lines (value)
   "Split keyword VALUE into lines of plain text.
 LaTeX line breaks (\\\\) start new lines, \\today becomes today's
 date, \\and becomes a comma, Org macros are expanded (see
-`org-show-expand-macros') or dropped, and other LaTeX commands are
+`org-slideboard-expand-macros') or dropped, and other LaTeX commands are
 dropped, keeping their arguments."
   (let ((value (substring-no-properties
-                (org-show--expand-macros-in-string (or value "")))))
+                (org-slideboard--expand-macros-in-string (or value "")))))
     (delq nil
           (mapcar
            (lambda (s)
@@ -1618,42 +1678,42 @@ dropped, keeping their arguments."
              (unless (string= s "") s))
            (split-string value "\\\\\\\\")))))
 
-(defun org-show--heading-title ()
+(defun org-slideboard--heading-title ()
   "Return the plain text of the heading at point."
   (org-link-display-format (org-get-heading t t t t)))
 
-(defun org-show--title-lines ()
+(defun org-slideboard--title-lines ()
   "Return the title page of the current buffer as a list of (TEXT . FACE)."
   (let* ((kw (org-collect-keywords '("TITLE" "SUBTITLE" "AUTHOR" "DATE")))
          (get (lambda (k)
-                (org-show--keyword-lines (mapconcat #'identity (cdr (assoc k kw)) " "))))
+                (org-slideboard--keyword-lines (mapconcat #'identity (cdr (assoc k kw)) " "))))
          (face (lambda (f) (lambda (s) (cons s f))))
          (title (or (funcall get "TITLE")
-                    (list (file-name-base (or (buffer-file-name (org-show--base-buffer))
+                    (list (file-name-base (or (buffer-file-name (org-slideboard--base-buffer))
                                               (buffer-name))))))
          (info (append (funcall get "AUTHOR") (funcall get "DATE"))))
-    (append (mapcar (funcall face 'org-show-page-title) title)
-            (mapcar (funcall face 'org-show-page-subtitle) (funcall get "SUBTITLE"))
+    (append (mapcar (funcall face 'org-slideboard-page-title) title)
+            (mapcar (funcall face 'org-slideboard-page-subtitle) (funcall get "SUBTITLE"))
             (when info
               (cons (cons "" nil)
-                    (mapcar (funcall face 'org-show-page-info) info))))))
+                    (mapcar (funcall face 'org-slideboard-page-info) info))))))
 
-(defun org-show--section-lines (marker)
+(defun org-slideboard--section-lines (marker)
   "Return the section page for the heading at MARKER as a list of (TEXT . FACE)."
   (org-with-point-at marker
-    (list (cons (org-show--heading-title) 'org-show-page-section))))
+    (list (cons (org-slideboard--heading-title) 'org-slideboard-page-section))))
 
-(defun org-show--section-ancestors ()
+(defun org-slideboard--section-ancestors ()
   "Return the positions of the section headings above the slide at point.
 These are the ancestors without the slide tag, outermost first."
   (save-excursion
     (let ((res '()))
       (while (org-up-heading-safe)
-        (unless (member org-show-slide-tag (org-get-tags nil t))
+        (unless (member org-slideboard-slide-tag (org-get-tags nil t))
           (push (point) res)))
       res)))
 
-(defun org-show--place-string (text vpos hpos)
+(defun org-slideboard--place-string (text vpos hpos)
   "Insert TEXT at line VPOS, column HPOS, padding with newlines and spaces."
   (goto-char (point-min))
   (dotimes (_ vpos)
@@ -1662,20 +1722,20 @@ These are the ancestors without the slide tag, outermost first."
   (move-to-column hpos t)
   (insert text))
 
-(defun org-show--show-page (lines scale animate)
+(defun org-slideboard--show-page (lines scale animate)
   "Show LINES, a list of (TEXT . FACE), centred on a page of their own.
 SCALE is the text scale.  With ANIMATE, the lines are animated in; a
 key press skips the rest of the animation."
-  (org-show--teardown-columns)
+  (org-slideboard--teardown-columns)
   (delete-other-windows)
-  (switch-to-buffer (get-buffer-create org-show--page-buffer))
+  (switch-to-buffer (get-buffer-create org-slideboard--page-buffer))
   (let ((inhibit-read-only t)) (erase-buffer))
   (setq buffer-undo-list t)
   (setq-local cursor-type nil)
   (setq-local show-trailing-whitespace nil)
-  (org-show--disable-modes)
+  (org-slideboard--disable-modes)
   (setq-local indent-tabs-mode nil)
-  (org-show--hide-mode-line (selected-window))
+  (org-slideboard--hide-mode-line (selected-window))
   (text-scale-set (or scale 5))
   (let* ((cols (window-max-chars-per-line))
          (rows (/ (window-body-height nil t) (window-font-height nil 'default)))
@@ -1686,7 +1746,7 @@ key press skips the rest of the animation."
         (unless (string= text "")
           (if (and animate (not (input-pending-p)))
               (animate-string text vpos hpos)
-            (org-show--place-string text vpos hpos))
+            (org-slideboard--place-string text vpos hpos))
           (when (cdr line)
             (save-excursion
               (goto-char (point-min))
@@ -1698,43 +1758,43 @@ key press skips the rest of the animation."
   (goto-char (point-min))
   (set-window-start nil (point-min)))
 
-(defun org-show--show-special (entry n)
+(defun org-slideboard--show-special (entry n)
   "Show the title or section page ENTRY, which is slide N."
   (let (lines scale animate)
     ;; read everything in the presentation buffer, where the settings
-    ;; may be buffer-local (file-local variables, #+ORG_SHOW:)
-    (with-current-buffer (org-show--show-buffer)
+    ;; may be buffer-local (file-local variables, #+SLIDEBOARD:)
+    (with-current-buffer (org-slideboard--show-buffer)
       (save-restriction
         (widen)
         (setq lines (pcase (car entry)
-                      (:title (org-show--title-lines))
-                      (:section (org-show--section-lines (cadr entry))))
-              scale org-show-page-text-scale
-              animate org-show-animate-pages)))
+                      (:title (org-slideboard--title-lines))
+                      (:section (org-slideboard--section-lines (cadr entry))))
+              scale org-slideboard-page-text-scale
+              animate org-slideboard-animate-pages)))
     (set-frame-name (format "%-180s%15s%s" (car (car lines)) "slide " n))
-    (org-show--show-page lines scale animate)
+    (org-slideboard--show-page lines scale animate)
     (message "")))
 
-(defun org-show--entry-title (entry)
+(defun org-slideboard--entry-title (entry)
   "Return a title for the slide list ENTRY, for the table of contents."
   (if (markerp entry)
       (org-with-point-at entry (nth 4 (org-heading-components)))
-    (with-current-buffer (find-file-noselect org-show-presentation-file)
+    (with-current-buffer (find-file-noselect org-slideboard-presentation-file)
       (save-restriction
         (widen)
         (pcase (car entry)
-          (:title (concat "Title page: " (car (car (org-show--title-lines)))))
-          (:section (concat "Section: " (car (car (org-show--section-lines (cadr entry)))))))))))
+          (:title (concat "Title page: " (car (car (org-slideboard--title-lines)))))
+          (:section (concat "Section: " (car (car (org-slideboard--section-lines (cadr entry)))))))))))
 
 ;;** Slides
 
-(defun org-show--goto-slide-heading ()
+(defun org-slideboard--goto-slide-heading ()
   "Move point to the slide heading containing point."
   (org-back-to-heading t)
-  (while (and (not (member org-show-slide-tag (org-get-tags nil t)))
+  (while (and (not (member org-slideboard-slide-tag (org-get-tags nil t)))
               (org-up-heading-safe))))
 
-(defun org-show-execute-slide ()
+(defun org-slideboard-execute-slide ()
   "Process slide at point.
 If it contains an Emacs Lisp source block, evaluate it.
   If it has beamer columns, show them side by side.
@@ -1742,19 +1802,19 @@ If it contains an Emacs Lisp source block, evaluate it.
   Hide all drawers.
 On a title or section page, show that page again."
   (interactive)
-  (if (equal (buffer-name) org-show--page-buffer)
-      (org-show-goto-slide org-show-current-slide-number)
-    (org-show--execute-slide)))
+  (if (equal (buffer-name) org-slideboard--page-buffer)
+      (org-slideboard-goto-slide org-slideboard-current-slide-number)
+    (org-slideboard--execute-slide)))
 
-(defun org-show--execute-slide ()
-  "Show the slide at point.  See `org-show-execute-slide'."
+(defun org-slideboard--execute-slide ()
+  "Show the slide at point.  See `org-slideboard-execute-slide'."
   ;; if point is in a column buffer, move to the same place in the base buffer
   (let ((pos (point))
-        (base (org-show--base-buffer)))
-    (org-show--teardown-columns)
+        (base (org-slideboard--base-buffer)))
+    (org-slideboard--teardown-columns)
     (switch-to-buffer base)
     (goto-char pos))
-  (setq org-show-presentation-file (org-show--file))
+  (setq org-slideboard-presentation-file (org-slideboard--file))
   (delete-other-windows)
 
   ;; make sure nothing is folded. This seems to be necessary to
@@ -1766,37 +1826,37 @@ On a title or section page, show that page again."
   (org-narrow-to-subtree)
   (visual-line-mode 1)
   (let ((heading-text (nth 4 (org-heading-components)))
-        (cols (org-show--slide-columns)))
+        (cols (org-slideboard--slide-columns)))
 
     (set-frame-name (format "%-180s%15s%s"
                             heading-text
                             "slide "
-                            (cdr (assoc heading-text org-show-slide-titles))))
+                            (cdr (assoc heading-text org-slideboard-slide-titles))))
 
     ;; setup the text
     (switch-to-buffer (current-buffer))
     (with-no-warnings
-      (if (fboundp 'org-fold-show-subtree) (org-fold-show-subtree) (org-show-subtree)))
+      (if (fboundp 'org-fold-show-subtree) (org-fold-show-subtree) (org-slideboard-subtree)))
     ;; blocks are not folded: code that is not wanted is hidden instead,
-    ;; see `org-show-src-display'
-    (setq org-show--slide-src (org-show--src-setting (point)))
-    (let ((src (and (not cols) (org-show--slide-src-split))))
+    ;; see `org-slideboard-src-display'
+    (setq org-slideboard--slide-src (org-slideboard--src-setting (point)))
+    (let ((src (and (not cols) (org-slideboard--slide-src-split))))
       (when src
         (setq cols src
-              src (org-show--src-split-direction (point-min))))
-      (setq org-show--split-direction src))
+              src (org-slideboard--src-split-direction (point-min))))
+      (setq org-slideboard--split-direction src))
     (if cols
-        (org-show--display-columns cols org-show--split-direction)
+        (org-slideboard--display-columns cols org-slideboard--split-direction)
       (delete-other-windows)
-      (org-show--hide-clutter (point-min) (point-max))
-      (org-show--hide-drawers)
-      (org-show--reflow)
-      (org-show--expand-macros)
-      (org-show--style-lists)
+      (org-slideboard--hide-clutter (point-min) (point-max))
+      (org-slideboard--hide-drawers)
+      (org-slideboard--reflow)
+      (org-slideboard--expand-macros)
+      (org-slideboard--style-lists)
       ;; preview equations in the current subtree
-      (org-show--preview-latex)
-      (org-show--show-images)
-      (org-show--fit-text (list (selected-window)) org-show-text-scale))
+      (org-slideboard--preview-latex)
+      (org-slideboard--show-images)
+      (org-slideboard--fit-text (list (selected-window)) org-slideboard-text-scale))
 
     ;; evaluate special code blocks last as they may change the arrangement
     (save-excursion
@@ -1806,80 +1866,92 @@ On a title or section page, show that page again."
           (goto-char (match-beginning 0))
           (let* ((info (save-excursion
                          (org-babel-get-src-block-info))))
-            (when (string= "emacs-lisp-slide" (car info))
+            (when (string= "slideboard-elisp" (car info))
               ;; fold code
               (org-cycle)
               (eval (read (concat "(progn " (nth 1 info) ")"))))))))
     ;; clear the minibuffer
     (message "")))
 
-(defun org-show-next-slide ()
+(defun org-slideboard-next-slide ()
   "Goto next slide in presentation."
   (interactive)
-  (find-file org-show-presentation-file)
+  (find-file org-slideboard-presentation-file)
   (widen)
-  (if (<= (+ org-show-current-slide-number 1) (length org-show-slide-list))
+  (if (<= (+ org-slideboard-current-slide-number 1) (length org-slideboard-slide-list))
       (progn
-        (setq org-show-current-slide-number (+ org-show-current-slide-number 1))
-        (org-show-goto-slide org-show-current-slide-number))
-    (org-show-goto-slide org-show-current-slide-number)
+        (setq org-slideboard-current-slide-number (+ org-slideboard-current-slide-number 1))
+        (org-slideboard-goto-slide org-slideboard-current-slide-number))
+    (org-slideboard-goto-slide org-slideboard-current-slide-number)
     (message "This is the end. My only friend the end.  Jim Morrison.")))
 
 
-(defun org-show-previous-slide ()
+(defun org-slideboard-previous-slide ()
   "Goto previous slide in the list."
   (interactive)
-  (find-file org-show-presentation-file)
+  (find-file org-slideboard-presentation-file)
   (widen)
-  (if (> (- org-show-current-slide-number 1) 0)
+  (if (> (- org-slideboard-current-slide-number 1) 0)
       (progn
-        (setq org-show-current-slide-number (- org-show-current-slide-number 1))
-        (org-show-goto-slide org-show-current-slide-number))
-    (org-show-goto-slide org-show-current-slide-number)
+        (setq org-slideboard-current-slide-number (- org-slideboard-current-slide-number 1))
+        (org-slideboard-goto-slide org-slideboard-current-slide-number))
+    (org-slideboard-goto-slide org-slideboard-current-slide-number)
     (message "Once upon a time...")))
 
 
-(defun org-show-open-slide ()
+(defun org-slideboard-open-slide ()
   "Start show at this slide."
   (interactive)
   (let ((pos (point)))
-    (switch-to-buffer (org-show--base-buffer))
+    (switch-to-buffer (org-slideboard--base-buffer))
     (goto-char pos))
-  (setq org-show-presentation-file (org-show--file))
+  (setq org-slideboard-presentation-file (org-slideboard--file))
   (widen)
-  (org-show--apply-keyword-settings)
-  (org-show-initialize)
-  (org-show--goto-slide-heading)
-  (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-show-slide-titles))))
+  (org-slideboard--apply-keyword-settings)
+  (org-slideboard-initialize)
+  (org-slideboard--goto-slide-heading)
+  (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
     (unless n (user-error "Not in a slide"))
-    (setq *org-show-running* t)
-    (org-show--beautify)
-    (unless org-show-mode (org-show-mode 1))
-    (setq org-show-current-slide-number n)
-    (org-show-goto-slide n)))
+    (setq org-slideboard--running t)
+    (org-slideboard--beautify)
+    (unless org-slideboard-mode (org-slideboard-mode 1))
+    (setq org-slideboard-current-slide-number n)
+    (org-slideboard-goto-slide n)))
 
 
-(defun org-show-initialize ()
-  "Initialize the org-show.
-Make slide lists for future navigation. Rerun this if you change
+(defvar org-slideboard--start-overlays '()
+  "Overlays made when the show starts, removed when it stops.")
+
+(defun org-slideboard--start-overlay (beg end)
+  "Hide BEG to END for the whole show."
+  (let ((ov (make-overlay beg end)))
+    (overlay-put ov 'invisible 'org-slideboard-slide)
+    (push ov org-slideboard--start-overlays)))
+
+(defun org-slideboard--slide-tag-regexp ()
+  "Return a regexp matching the slide tag, see `org-slideboard-slide-tag'."
+  (concat ":" (regexp-quote org-slideboard-slide-tag) ":"))
+
+(defun org-slideboard-initialize ()
+  "Initialize the org-slideboard.
+Make slide lists for future navigation.  Rerun this if you change
 slide order.  The list starts with a title page if
-`org-show-title-page' is non-nil, and has a section page before the
-first slide of each section if `org-show-section-pages' is non-nil."
-  (setq  org-show-slide-titles '()
-         org-show-temp-images '()
-         org-show-slide-list '())
+`org-slideboard-title-page' is non-nil, and has a section page before the
+first slide of each section if `org-slideboard-section-pages' is non-nil."
+  (setq  org-slideboard-slide-titles '()
+         org-slideboard-slide-list '())
 
   (let ((n 0)
         (seen '()))
-    (when org-show-title-page
-      (push (cons (cl-incf n) (list :title)) org-show-slide-list))
+    (when org-slideboard-title-page
+      (push (cons (cl-incf n) (list :title)) org-slideboard-slide-list))
     (org-map-entries
      (lambda ()
        ;; COMMENTed slides are skipped, as they are in export
-       (when (and (member org-show-slide-tag (org-get-tags nil t))
+       (when (and (member org-slideboard-slide-tag (org-get-tags nil t))
                   (not (org-in-commented-heading-p)))
-         (when org-show-section-pages
-           (dolist (pos (org-show--section-ancestors))
+         (when org-slideboard-section-pages
+           (dolist (pos (org-slideboard--section-ancestors))
              (unless (member pos seen)
                (push pos seen)
                (cl-incf n)
@@ -1887,36 +1959,39 @@ first slide of each section if `org-show-section-pages' is non-nil."
                              (goto-char pos)
                              (nth 4 (org-heading-components)))
                            n)
-                     org-show-slide-titles)
+                     org-slideboard-slide-titles)
                (push (cons n (list :section (set-marker (make-marker) pos)))
-                     org-show-slide-list))))
+                     org-slideboard-slide-list))))
          (cl-incf n)
-         (push (cons (nth 4 (org-heading-components)) n) org-show-slide-titles)
-         (push (cons n (set-marker (make-marker) (point))) org-show-slide-list))))
-    (setq org-show-slide-titles (nreverse org-show-slide-titles)
-          org-show-slide-list (nreverse org-show-slide-list))))
+         (push (cons (nth 4 (org-heading-components)) n) org-slideboard-slide-titles)
+         (push (cons n (set-marker (make-marker) (point))) org-slideboard-slide-list))))
+    (setq org-slideboard-slide-titles (nreverse org-slideboard-slide-titles)
+          org-slideboard-slide-list (nreverse org-slideboard-slide-list))))
 
 
-(defun org-show-start-slideshow ()
+;;;###autoload
+(defun org-slideboard-start-slideshow ()
   "Start the slide show, at the beginning."
   (interactive)
-  (switch-to-buffer (org-show--base-buffer))
-  (setq *org-show-running* t)
-  (setq org-show-presentation-file (org-show--file))
+  (switch-to-buffer (org-slideboard--base-buffer))
+  (setq org-slideboard--running t)
+  (setq org-slideboard-presentation-file (org-slideboard--file))
   (widen)
   (goto-char (point-min))
-  (setq org-tags-column org-show-tags-column)
-  (org-set-tags-command '(4))
 
-  (org-show--apply-keyword-settings)
-  (org-show-initialize)
-  ;; hide slide tags
+  (org-slideboard--apply-keyword-settings)
+  (org-slideboard-initialize)
+  ;; hide the tags of slide headings, with the blanks before them, so a
+  ;; heading does not wrap at large text sizes
   (save-excursion
-    (while (re-search-forward org-show-slide-tag-regexp nil t)
-      (overlay-put
-       (make-overlay (match-beginning 0) (match-end 0))
-       'invisible 'slide)))
-  ;; hide emacs-lisp-slide blocks
+    (while (re-search-forward (org-slideboard--slide-tag-regexp) nil t)
+      (when (org-at-heading-p)
+        (let ((eol (line-end-position)))
+          (beginning-of-line)
+          (when (re-search-forward "[ \t]+:[[:alnum:]_@#%:]+:[ \t]*$" eol t)
+            (org-slideboard--start-overlay (match-beginning 0) (match-end 0)))
+          (goto-char eol)))))
+  ;; hide slideboard-elisp blocks
   (save-excursion
     (goto-char (point-min))
     (while (re-search-forward org-babel-src-block-regexp nil t)
@@ -1927,100 +2002,84 @@ first slide of each section if `org-show-section-pages' is non-nil."
                (end (org-element-property :end src))
                (info (save-excursion
                        (org-babel-get-src-block-info))))
-          (when (string= "emacs-lisp-slide" (car info))
-            (overlay-put
-             (make-overlay start end)
-             'invisible 'slide))))))
-  (add-to-invisibility-spec 'slide)
+          (when (string= "slideboard-elisp" (car info))
+            (org-slideboard--start-overlay start end))))))
+  (add-to-invisibility-spec 'org-slideboard-slide)
   (goto-char (point-min))
   (delete-other-windows)
-  (org-show--beautify)
-  (unless org-show-mode (org-show-mode 1))
-  (add-hook 'org-babel-after-execute-hook #'org-show--after-execute)
-  (add-hook 'org-src-mode-hook #'org-show--src-edit-setup)
-  (setq org-show-current-slide-number 1)
-  (org-show-goto-slide 1))
+  (org-slideboard--beautify)
+  (unless org-slideboard-mode (org-slideboard-mode 1))
+  (add-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
+  (add-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
+  (setq org-slideboard-current-slide-number 1)
+  (org-slideboard-goto-slide 1))
 
 
-(defun org-show-stop-slideshow ()
-  "Stop the org-show.
-Try to reset the state of your Emacs. It isn't perfect ;)"
+(defun org-slideboard-stop-slideshow ()
+  "Stop the slide show and restore the presentation buffer."
   (interactive)
-  (remove-hook 'org-babel-after-execute-hook #'org-show--after-execute)
-  (remove-hook 'org-src-mode-hook #'org-show--src-edit-setup)
-  (dolist (buf org-show--scaled-buffers)
+  (remove-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
+  (remove-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
+  (dolist (buf org-slideboard--scaled-buffers)
     (when (buffer-live-p buf)
       (with-current-buffer buf (text-scale-set 0))))
-  (setq org-show--scaled-buffers '())
-  (org-show--teardown-columns)
-  (when org-show-presentation-file (find-file org-show-presentation-file))
+  (setq org-slideboard--scaled-buffers '())
+  (org-slideboard--teardown-columns)
+  (when org-slideboard-presentation-file (find-file org-slideboard-presentation-file))
   ;; make slide tag visible again
-  (remove-from-invisibility-spec 'slide)
-  (remove-from-invisibility-spec 'org-show)
+  (remove-from-invisibility-spec 'org-slideboard-slide)
+  (remove-from-invisibility-spec 'org-slideboard)
+  (mapc #'delete-overlay org-slideboard--start-overlays)
+  (setq org-slideboard--start-overlays '())
 
   ;; Redisplay inline images
   (widen)
-  (org-show--org-images)
-
-  ;; clean up temp images
-  (mapc (lambda (x)
-          (let ((bname (file-name-nondirectory x)))
-            (when (get-buffer bname)
-              (set-buffer bname)
-              (save-buffer)
-              (kill-buffer bname)))
-
-          (when (file-exists-p x)
-            (delete-file x)))
-        org-show-temp-images)
-  (setq org-show-temp-images '())
+  (org-slideboard--org-images)
 
   ;; ;; clean up miscellaneous buffers
   (when (get-buffer "*Animation*") (kill-buffer "*Animation*"))
-  (when (get-buffer org-show--page-buffer) (kill-buffer org-show--page-buffer))
+  (when (get-buffer org-slideboard--page-buffer) (kill-buffer org-slideboard--page-buffer))
 
-  (when org-show-presentation-file (find-file org-show-presentation-file))
+  (when org-slideboard-presentation-file (find-file org-slideboard-presentation-file))
   (widen)
   ;; the equation images were made for the slides
   (org-clear-latex-preview)
   (text-scale-set 0)
   (delete-other-windows)
-  (setq org-show-presentation-file nil)
-  (setq org-show-current-slide-number 1)
+  (setq org-slideboard-presentation-file nil)
+  (setq org-slideboard-current-slide-number 1)
   (set-frame-name (if (buffer-file-name)
                       (abbreviate-file-name (buffer-file-name))))
-  (org-show--unbeautify)
-  (org-show--restore-keyword-settings)
-  (setq org-tags-column org-show-original-tags-column)
-  (org-set-tags-command '(4))
-  (setq *org-show-running* nil)
-  (org-show-mode -1))
+  (org-slideboard--unbeautify)
+  (org-slideboard--restore-keyword-settings)
+  (setq org-slideboard--running nil)
+  (org-slideboard-mode -1))
 
 
-(defun org-show-goto-slide (n)
+(defun org-slideboard-goto-slide (n)
   "Goto slide N."
   (interactive "nSlide number: ")
   (message "Going to slide %s" n)
-  (find-file org-show-presentation-file)
-  (setq org-show-current-slide-number n)
+  (find-file org-slideboard-presentation-file)
+  (setq org-slideboard-current-slide-number n)
   (widen)
-  (let ((entry (cdr (assoc n org-show-slide-list))))
+  (let ((entry (cdr (assoc n org-slideboard-slide-list))))
     (if (markerp entry)
         (progn
           (goto-char entry)
-          (org-show--execute-slide))
-      (org-show--show-special entry n))))
+          (org-slideboard--execute-slide))
+      (org-slideboard--show-special entry n))))
 
 
-(defun org-show-toc ()
+(defun org-slideboard-toc ()
   "Show a table of contents for the slideshow."
   (interactive)
   (let ((links
          (mapcar (lambda (x)
-                   (format " [[elisp:(org-show-goto-slide %s)][%2s %s]]\n\n"
-                           (car x) (car x) (org-show--entry-title (cdr x))))
-                 org-show-slide-list)))
-    (org-show--teardown-columns)
+                   (format " [[elisp:(org-slideboard-goto-slide %s)][%2s %s]]\n\n"
+                           (car x) (car x) (org-slideboard--entry-title (cdr x))))
+                 org-slideboard-slide-list)))
+    (org-slideboard--teardown-columns)
     (delete-other-windows)
     (switch-to-buffer "*List of Slides*")
     (org-mode)
@@ -2033,7 +2092,7 @@ Try to reset the state of your Emacs. It isn't perfect ;)"
     (local-set-key "q" #'(lambda () (interactive) (kill-buffer)))))
 
 
-(defun org-show-animate (strings)
+(defun org-slideboard-animate (strings)
   "Animate STRINGS in an *Animation* buffer."
   (switch-to-buffer (get-buffer-create
                      (or animation-buffer-name
@@ -2056,104 +2115,109 @@ Try to reset the state of your Emacs. It isn't perfect ;)"
       (setq strings (cdr strings)))))
 
 
-(defun org-show--change-text-scale (delta)
+(defun org-slideboard--change-text-scale (delta)
   "Change the slide text scale by DELTA steps for this and later slides.
-On a title or section page this changes `org-show-page-text-scale', on a
-slide with columns `org-show-column-text-scale',
-otherwise `org-show-text-scale'.  The change starts from the scale
+On a title or section page this changes `org-slideboard-page-text-scale', on a
+slide with columns `org-slideboard-column-text-scale',
+otherwise `org-slideboard-text-scale'.  The change starts from the scale
 currently shown, which may be smaller than the maximum when text was
 shrunk to fit."
-  (let* ((col (cl-find-if #'buffer-live-p org-show--column-buffers))
-         (page (equal (buffer-name) org-show--page-buffer))
-         (var (cond (page 'org-show-page-text-scale)
-                    (col 'org-show-column-text-scale)
-                    (t 'org-show-text-scale)))
+  (let* ((col (cl-find-if #'buffer-live-p org-slideboard--column-buffers))
+         (page (equal (buffer-name) org-slideboard--page-buffer))
+         (var (cond (page 'org-slideboard-page-text-scale)
+                    (col 'org-slideboard-column-text-scale)
+                    (t 'org-slideboard-text-scale)))
          (shown (with-current-buffer (if page (current-buffer)
-                                       (or col (org-show--base-buffer)))
+                                       (or col (org-slideboard--base-buffer)))
                   (bound-and-true-p text-scale-mode-amount)))
-         (new (+ (or shown (buffer-local-value var (org-show--show-buffer))) delta)))
+         (new (+ (or shown (buffer-local-value var (org-slideboard--show-buffer))) delta)))
     ;; in the presentation buffer, so a value local to it (file-local
-    ;; variable or #+ORG_SHOW:) is changed there, and a global one globally
-    (with-current-buffer (org-show--show-buffer)
+    ;; variable or #+SLIDEBOARD:) is changed there, and a global one globally
+    (with-current-buffer (org-slideboard--show-buffer)
       (set var new))
-    (if *org-show-running*
-        (org-show-goto-slide org-show-current-slide-number)
+    (if org-slideboard--running
+        (org-slideboard-goto-slide org-slideboard-current-slide-number)
       (text-scale-set new))
     (message "%s = %s" var new)))
 
 
-(defun org-show-increase-text-size ()
+(defun org-slideboard-increase-text-size ()
   "Increase the text size of this and later slides.
-Bound to \\[org-show-increase-text-size].  With `org-show-fit-text'
+Bound to \\[org-slideboard-increase-text-size].  With `org-slideboard-fit-text'
 non-nil, text never grows beyond what fits in the window."
   (interactive)
-  (org-show--change-text-scale 1))
+  (org-slideboard--change-text-scale 1))
 
 
-(defun org-show-decrease-text-size ()
+(defun org-slideboard-decrease-text-size ()
   "Decrease the text size of this and later slides.
-Bound to \\[org-show-decrease-text-size]."
+Bound to \\[org-slideboard-decrease-text-size]."
   (interactive)
-  (org-show--change-text-scale -1))
+  (org-slideboard--change-text-scale -1))
 
-;;* Menu and org-show-mode
+;;* Menu and org-slideboard-mode
 
-(defvar org-show-mode-map
+(defvar org-slideboard-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map [next] 'org-show-next-slide)
-    (define-key map [prior] 'org-show-previous-slide)
+    (define-key map [next] 'org-slideboard-next-slide)
+    (define-key map [prior] 'org-slideboard-previous-slide)
 
-    (define-key map [f5] 'org-show-start-slideshow)
-    (define-key map [f6] 'org-show-execute-slide)
-    (define-key map (kbd "C--") 'org-show-decrease-text-size)
-    (define-key map (kbd "C-=") 'org-show-increase-text-size)
-    (define-key map (kbd "\e\eg") 'org-show-goto-slide)
-    (define-key map (kbd "\e\et") 'org-show-toc)
-    (define-key map (kbd "\e\eq") 'org-show-stop-slideshow)
+    ;; F5-F9 are reserved for users; bind them in your configuration
+    (define-key map (kbd "C-c C-r") 'org-slideboard-execute-slide)
+    (define-key map (kbd "C--") 'org-slideboard-decrease-text-size)
+    (define-key map (kbd "C-=") 'org-slideboard-increase-text-size)
+    (define-key map (kbd "\e\eg") 'org-slideboard-goto-slide)
+    (define-key map (kbd "\e\et") 'org-slideboard-toc)
+    (define-key map (kbd "\e\eq") 'org-slideboard-stop-slideshow)
     map)
-  "Keymap for function ‘org-show-mode’.")
+  "Keymap for function ‘org-slideboard-mode’.")
 
 
-(easy-menu-define org-show-menu org-show-mode-map "Menu for org-show."
-  '("org-show"
-    ["Start slide show" org-show-start-slideshow t]
-    ["Next slide" org-show-next-slide t]
-    ["Previous slide" org-show-previous-slide t]
-    ["Open this slide" org-show-open-slide t]
-    ["Goto slide" org-show-goto-slide t]
-    ["Table of contents" org-show-toc t]
-    ["Stop slide show"  org-show-stop-slideshow t]))
+(easy-menu-define org-slideboard-menu org-slideboard-mode-map "Menu for org-slideboard."
+  '("org-slideboard"
+    ["Start slide show" org-slideboard-start-slideshow t]
+    ["Next slide" org-slideboard-next-slide t]
+    ["Previous slide" org-slideboard-previous-slide t]
+    ["Open this slide" org-slideboard-open-slide t]
+    ["Goto slide" org-slideboard-goto-slide t]
+    ["Table of contents" org-slideboard-toc t]
+    ["Stop slide show"  org-slideboard-stop-slideshow t]))
 
 
-(define-minor-mode org-show-mode
-  "Minor mode for org-show
+;;;###autoload
+(define-minor-mode org-slideboard-mode
+  "Minor mode for presenting Org files as slides.
+It is turned on by `org-slideboard-start-slideshow', and turning it
+off stops the show.
 
-\\{org-show-mode-map}"
+\\{org-slideboard-mode-map}"
   :init-value nil
-  :lighter " org-show"
+  :lighter " org-slideboard"
   :global t
-  :group 'org
-  :keymap org-show-mode-map
+  :group 'org-slideboard
+  :keymap org-slideboard-mode-map
   ;; https://www.gnu.org/software/emacs/manual/html_node/elisp/Minor-Mode-Conventions.html
-  (if org-show-mode
+  (if org-slideboard-mode
       (when (bound-and-true-p flyspell-mode)
-        (setq *org-show-flyspell-mode* t)
+        (setq org-slideboard--flyspell t)
         (flyspell-mode-off))
     ;; restore flyspell
-    (when *org-show-flyspell-mode*
+    (when org-slideboard--flyspell
       (flyspell-mode-on)
-      (setq *org-show-flyspell-mode* nil))
+      (setq org-slideboard--flyspell nil))
 
     ;; close the show.
-    (when *org-show-running*
-      (org-show-stop-slideshow))))
+    (when org-slideboard--running
+      (org-slideboard-stop-slideshow))))
 
-;;* Make emacs-lisp-slide blocks executable
+;;* Make slideboard-elisp blocks executable
 
 ;; this is tricker than I thought. It seems babel usually runs in some
 ;; sub-process and I need the code to be executed in the current buffer.
-(defun org-babel-execute:emacs-lisp-slide (body _params)
-  (message "%S" body)
+(defun org-babel-execute:slideboard-elisp (_body _params)
+  "Evaluate a slideboard-elisp block in the current buffer.
+Such blocks are run when their slide is shown, and can change the
+slide's arrangement."
   (let ((src (org-element-context)))
     (save-excursion
       (goto-char (org-element-property :begin src))
@@ -2161,17 +2225,22 @@ Bound to \\[org-show-decrease-text-size]."
       (eval-region (match-beginning 0) (match-end 0)))))
 
 ;; * help
-(defun org-show-help ()
-  "Open the help file."
+(defun org-slideboard-help ()
+  "Show the org-slideboard documentation.
+Open README.org when it is next to the library, as in a git checkout,
+and the README on the web otherwise."
   (interactive)
-  (find-file (expand-file-name "org-show.org"
-                               (file-name-directory
-                                (locate-library "org-show")))))
+  (let ((readme (expand-file-name "README.org"
+                                  (file-name-directory
+                                   (locate-library "org-slideboard")))))
+    (if (file-exists-p readme)
+        (find-file readme)
+      (browse-url "https://github.com/vikasrawal/org-slideboard#readme"))))
 
 
 
 ;;* The end
 
-(provide 'org-show)
+(provide 'org-slideboard)
 
-;;; org-show-beamer.el ends here
+;;; org-slideboard.el ends here
