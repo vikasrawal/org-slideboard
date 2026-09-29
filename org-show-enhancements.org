@@ -3,8 +3,7 @@
 
 This file describes the changes made to =org-show.el= so that an Org file
 written for beamer export can be presented directly in Emacs.  The original
-org-show documentation is in [[file:org-show.org]]; the previous version of
-the code is kept in =org-show-old.el=.
+org-show documentation is in [[file:org-show.org]].
 
 * Overview
 
