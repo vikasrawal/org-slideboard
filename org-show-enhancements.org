@@ -16,6 +16,8 @@ The enhanced org-show adds:
   scaled to the width and height of their window.
 - *Text fitted to the slide*: text shrinks until each column fits, and
   size changes carry over to later slides.
+- *Aligned tables*: tables are aligned to what is displayed, including
+  expanded macros, equation images and proportional fonts.
 - *Reflowed paragraphs*: hard-wrapped source lines are joined on screen, as
   LaTeX would do.
 - *Clutter hidden*: property drawers, =#+NAME:=, =#+RESULTS:=, =#+ATTR_*:=
@@ -276,12 +278,24 @@ expansion look as they do on the slide, and macros inside an expansion
 are expanded too.  Macros in =#+TITLE=, =#+AUTHOR= etc. are expanded on
 the title page.  =#+MACRO:= definitions that evaluate Lisp (=(eval
 ...)=) are not expanded, so starting a show never runs code from the
-file; use =org-show-macro-templates= for those.  A macro inside a table
-cell may un-align the table, since the table was aligned to the macro
-text.
+file; use =org-show-macro-templates= for those.  Tables with macros stay
+aligned, see [[*Tables][Tables]].
 
 To turn expansion off, set =org-show-expand-macros= to nil (or
 =#+ORG_SHOW: macros:nil=).
+
+** Tables
+Org aligns a table by the characters in the file, but on a slide a cell
+can show something of another width: an expanded macro, an equation image
+(=$\times$=), or text in a proportional font.  During the show, every Org
+table is aligned to what is actually displayed: the width of each cell is
+measured in the window, and the blanks around it are shown as space of the
+right width, so the =|= separators line up.  Numbers, which Org aligns to
+the right, stay right-aligned, and horizontal rules are drawn to the column
+widths.  This is redone whenever the text size changes.
+
+Only the display changes; the file is not.  To keep Org's own layout, set
+=org-show-align-tables= to nil (or =#+ORG_SHOW: align-tables:nil=).
 
 ** Paragraphs
 Line breaks inside a paragraph are displayed as spaces, so hard-wrapped
@@ -394,8 +408,8 @@ the presentation again:
 (setq org-show-hide-macro-markers nil)
 #+end_src
 
-Note: in variable-pitch text, Org tables and code blocks can lose their
-alignment.
+Note: in variable-pitch text, code blocks can lose their alignment.  Tables
+are re-aligned during the show (see [[*Tables][Tables]]).
 
 * Per-file settings
 
@@ -425,6 +439,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =emphasis=       | =org-show-hide-emphasis-markers=                      | =t= / =nil=                |
 | =macro-markers=  | =org-show-hide-macro-markers=                         | =t= / =nil=                |
 | =macros=         | =org-show-expand-macros=                              | =t= / =nil=                |
+| =align-tables=   | =org-show-align-tables=                               | =t= / =nil=                |
 | =bullets=        | =org-show-list-bullets=                               | list of strings, or =nil=  |
 | =list-indent=    | =org-show-list-indent=                                | number                     |
 | =hanging=        | =org-show-hanging-indent=                             | =t= / =nil=                |
@@ -496,6 +511,7 @@ that is in effect (the local one if there is one).
 | =org-show-hide-macro-markers=        | t                                              | hide the {{{ }}} of macros during the presentation       |
 | =org-show-expand-macros=             | t                                              | show macros as their expansion                           |
 | =org-show-macro-templates=           | nil                                            | macro definitions for the show                           |
+| =org-show-align-tables=              | t                                              | align tables to what is displayed                        |
 | =org-show-title-page=                | t                                              | show a title page                                        |
 | =org-show-section-pages=             | t                                              | show section pages                                       |
 | =org-show-animate-pages=             | t                                              | animate the title and section pages                      |

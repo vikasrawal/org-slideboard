@@ -182,6 +182,16 @@ This turns on `org-hide-macro-markers' in the slide buffers.  It
 matters for macros that are not expanded, see
 `org-show-expand-macros'.")
 
+(defvar org-show-align-tables t
+  "If non-nil, align Org tables to what is displayed on the slides.
+Org aligns a table by the characters in the file, but on a slide a
+cell can show an expanded macro, an equation image or proportional
+text, so the columns would not line up.  The padding is done with
+overlays, so the file is not changed.")
+
+(defvar-local org-show--table-overlays nil
+  "Overlays made by `org-show--align-tables' in this buffer.")
+
 (defvar org-show-expand-macros t
   "If non-nil, show Org macros on the slides as their expansion.
 A macro is expanded with, in this order of preference:
@@ -572,7 +582,8 @@ All windows get the same scale.  Return the scale used."
    do (dolist (w wins)
         (with-current-buffer (window-buffer w)
           (text-scale-set scale)
-          (org-show--scale-latex w)))
+          (org-show--scale-latex w)
+          (org-show--align-tables w)))
    until (or (not org-show-fit-text)
              (<= scale org-show-min-text-scale)
              (cl-every #'org-show--fits-p wins))
@@ -775,7 +786,8 @@ I is the column index, used to name the indirect buffer."
       ;; the clone copied the base buffer's mode variables, but the face
       ;; remapping was reset above, so apply the beautify modes afresh
       (setq org-show--beautified nil
-            org-show--disabled nil)
+            org-show--disabled nil
+            org-show--table-overlays nil)
       (kill-local-variable 'buffer-face-mode)
       (org-show--beautify)
       (goto-char (point-min))
@@ -809,6 +821,7 @@ The current buffer must be the base buffer, narrowed to the slide."
     (org-show--expand-macros)
     (org-show--style-lists)
     (org-show--preview-latex)
+    (org-show--align-tables title-win)
     (org-show--hide-mode-line title-win)
     (goto-char (point-min))
     ;; size the title strip first, so the column heights are final
@@ -856,6 +869,7 @@ The current buffer must be the base buffer, narrowed to the slide."
                org-show-section-pages org-show-animate-pages
                org-show-hanging-indent org-show-hide-emphasis-markers
                org-show-hide-macro-markers org-show-expand-macros
+               org-show-align-tables
                org-show-center-display-math))
   (put var 'safe-local-variable #'booleanp))
 (dolist (var '(org-show-text-scale org-show-column-text-scale
@@ -886,6 +900,7 @@ The current buffer must be the base buffer, narrowed to the slide."
     ("emphasis" org-show-hide-emphasis-markers booleanp)
     ("macro-markers" org-show-hide-macro-markers booleanp)
     ("macros" org-show-expand-macros booleanp)
+    ("align-tables" org-show-align-tables booleanp)
     ("bullets" org-show-list-bullets org-show--string-list-p)
     ("list-indent" org-show-list-indent natnump)
     ("hanging" org-show-hanging-indent booleanp)
@@ -1131,6 +1146,99 @@ buffer text is not changed."
                 ;; overlay value not in the invisibility spec wins
                 (overlay-put ov 'invisible 'org-show-macro)
                 (push ov org-show--hide-overlays)))))))))
+
+;;** Tables
+
+(defun org-show--table-line-cells ()
+  "Return the cells of the table line at point, as (BEG . END) pairs.
+BEG and END are just inside the separators around the cell: the |
+characters, and in a horizontal rule also the + characters."
+  (save-excursion
+    (let* ((eol (line-end-position))
+           (seps (progn (skip-chars-forward " \t")
+                        (if (looking-at-p "|-") "|+" "|")))
+           (pos '()))
+      (while (< (point) eol)
+        (when (memq (char-after) (append seps nil))
+          (push (point) pos))
+        (forward-char))
+      (setq pos (nreverse pos))
+      (cl-loop for (a b) on pos while b collect (cons (1+ a) b)))))
+
+(defun org-show--table-pad (beg end pixels &optional face)
+  "Display the region BEG END as blank space PIXELS wide, in FACE."
+  (when (< beg end)
+    (let ((ov (make-overlay beg end nil t nil)))
+      (overlay-put ov 'display `(space :width (,(max 0 pixels))))
+      (overlay-put ov 'priority 1001)
+      (when face (overlay-put ov 'face face))
+      (push ov org-show--table-overlays)
+      (push ov org-show--hide-overlays))))
+
+(defun org-show--align-tables (&optional win)
+  "Align the Org tables in the accessible region to their display in WIN.
+WIN defaults to the selected window.  The width of each cell is
+measured as displayed, with expanded macros, equation images and the
+font in use, and the blanks around it are shown as space of the width
+that lines up the columns.  Cells that Org right-aligned (numbers) stay
+right-aligned.  Horizontal rules are drawn to the column widths.  See
+`org-show-align-tables'."
+  (setq win (or win (selected-window)))
+  (mapc #'delete-overlay org-show--table-overlays)
+  (setq org-show--table-overlays nil)
+  (when org-show-align-tables
+    (org-element-map (org-element-parse-buffer) 'table
+      (lambda (table)
+        (when (eq (org-element-property :type table) 'org)
+          (save-excursion
+            (let ((end (org-element-property :contents-end table))
+                  (rows '())
+                  (widths (make-hash-table))
+                  (spc nil))
+              (goto-char (org-element-property :post-affiliated table))
+              ;; measure
+              (while (and (< (point) (or end (point-max)))
+                          (looking-at-p "[ \t]*|"))
+                (let* ((hline (looking-at-p "[ \t]*|-"))
+                       (cells
+                        (cl-loop
+                         for (b . e) in (org-show--table-line-cells)
+                         for i from 0
+                         collect
+                         (let* ((cb (save-excursion (goto-char b)
+                                                    (skip-chars-forward " \t" e)
+                                                    (point)))
+                                (ce (save-excursion (goto-char e)
+                                                    (skip-chars-backward " \t" cb)
+                                                    (point)))
+                                (w (if (or hline (>= cb ce)) 0
+                                     (car (window-text-pixel-size win cb ce)))))
+                           (when (and (not spc) (not hline) (< b cb))
+                             (setq spc (car (window-text-pixel-size win b (1+ b)))))
+                           (puthash i (max w (gethash i widths 0)) widths)
+                           (list b e cb ce w)))))
+                  (push (cons hline cells) rows))
+                (forward-line 1))
+              (setq spc (or spc (frame-char-width (window-frame win))))
+              ;; pad
+              (dolist (row rows)
+                (cl-loop
+                 for (b e cb ce w) in (cdr row)
+                 for i from 0
+                 do (let ((col (gethash i widths 0)))
+                      (cond
+                       ((car row)
+                        (org-show--table-pad b e (+ col (* 2 spc))
+                                             '(:inherit org-table :strike-through t)))
+                       ((>= cb ce)
+                        (org-show--table-pad b e (+ col (* 2 spc))))
+                       ;; Org pads numbers on the left
+                       ((> (- cb b) 1)
+                        (org-show--table-pad b cb (+ (- col w) spc))
+                        (org-show--table-pad ce e spc))
+                       (t
+                        (org-show--table-pad b cb spc)
+                        (org-show--table-pad ce e (+ (- col w) spc))))))))))))))
 
 ;;** Title and section pages
 
