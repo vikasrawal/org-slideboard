@@ -20,10 +20,15 @@ The enhanced org-show adds:
   LaTeX would do.
 - *Clutter hidden*: property drawers, =#+NAME:=, =#+RESULTS:=, =#+ATTR_*:=
   lines, non-exported source blocks and raw LaTeX lines are not shown.
+- *Equations sized to the text*: LaTeX math is previewed at the size of
+  the text and follows it as the text is fitted, and beamer-only
+  =#+LATEX_HEADER:= lines no longer leak into the equation images.
+- *Macros expanded*: ={{{macro(...)}}}= is shown as its expansion, and a
+  macro can be given its own definition for the show.
 - *Title page and section pages*: generated (and animated) from =#+TITLE=,
   =#+AUTHOR=, =#+DATE= and from the headings above the slides.
 - *Beautification during the presentation only*: org-modern,
-  variable-pitch text and hidden emphasis markers are switched on for
+  variable-pitch text and hidden emphasis and macro markers are switched on for
   the presentation and turned off afterwards.
 - *COMMENT headings skipped*, as in beamer export.
 
@@ -125,7 +130,7 @@ These are active while =org-show-mode= is on (it is turned on by
 | =PgDn=    | next slide                           |
 | =PgUp=    | previous slide                       |
 | =F5=      | start the presentation               |
-| =F6=      | presentation the current slide again         |
+| =F6=      | show the current slide again         |
 | ~C-=~     | larger text (this and later slides)  |
 | =C--=     | smaller text (this and later slides) |
 | =M-ESC g= | go to slide number                   |
@@ -175,6 +180,109 @@ scale.
 - Text never grows beyond what fits.  To allow text that overflows the
   window, set =org-show-fit-text= to nil.
 
+** Equations
+LaTeX math (=$...$=, =\(...\)=, =\[...\]=, =$$...$$= and environments
+such as =equation= or =align*=) is previewed as images, as with =C-c C-x
+C-l=, and laid out for the slides:
+
+- *Sized to the text*: equations are shown at =org-show-latex-size= (0.8)
+  times the size of the text font.  The 10pt LaTeX font is matched to the
+  text font by measuring a preview image, so this works with any font,
+  with =variable-pitch-mode=, and whatever =:scale= is set in
+  =org-format-latex-options=.  Use 1.0 for math as large as the text.
+- *Follows the text*: equations grow and shrink with the text of the
+  slide, when the text is shrunk to fit and with ~C-=~ / =C--=.  Since they
+  are sized before the text is fitted, a slide with large equations gets a
+  smaller text size instead of running off the window.
+- *Sharp*: the images are rendered at =org-show-latex-scale= (4.0) and
+  displayed smaller.  With =dvisvgm= (SVG) they are sharp at any size; with
+  =dvipng= a higher render scale gives sharper but slower images.
+- *Left aligned*: display equations start at the left margin, like the
+  text.  Set =org-show-center-display-math= to =t= to centre them in the
+  window or column, as LaTeX does.  Inline math always stays in the text.
+- *Own lines*: display equations inside a paragraph keep their own lines
+  when the paragraph is rewrapped.
+- *Never wider than the window*: numbered environments such as =equation=
+  are as wide as a LaTeX page, since the number is at the right margin, so
+  they may be shrunk to fit.  For big equations, use =equation*= or
+  =\[...\]=.
+- *Named equations*: an environment with a =#+NAME:= line is shown; the
+  name line is hidden with the other clutter.
+- *No beamer settings in the images*: Org previews equations with the
+  article class, but adds the file's =#+LATEX_HEADER:= lines.  Beamer
+  commands there, such as =\setbeamersize{description width=0.1cm}=, are
+  unknown to article, and LaTeX prints their arguments in every equation.
+  During the show, lines matching =org-show-latex-preview-drop-regexp=
+  (=\setbeamer...=, =\use...theme=, =\AtBegin...=, =\logo=,
+  =\titlegraphic=, =\institute=) are left out of the preview preamble.
+  Other headers, such as =\usepackage{amsmath}= or =\newcommand=, are kept.
+  Outside the show, =C-c C-x C-l= still uses the full preamble.
+
+When the presentation stops, the equation images are removed, since
+they were made for the slides; press =C-c C-x C-l= to preview again.  The
+images are cached (in =ltximg/=, see =org-preview-latex-image-directory=),
+so a slide is slow only the first time it is shown.
+
+For example, for slightly larger, centred equations in one presentation:
+
+#+begin_example
+,#+ORG_SHOW: latex-size:1.0 center-math:t
+#+end_example
+
+** Macros
+Org macros (={{{name(arguments)}}}=) are shown on the slides as their
+expansion, with overlays, so the file is not changed.  Many macros expand
+to LaTeX that means nothing on screen, so a macro can be given a separate
+definition for the show.  The expansion is chosen in this order:
+
+1. A =#+ORG_SHOW_MACRO:= line in the file, written like a =#+MACRO:=
+   line.  Beamer and other exporters ignore it.  For example, to show only
+   the text of a cell-colour macro:
+
+   #+begin_example
+   ,#+MACRO: cc @@latex:\cellcolor{$1}$2@@
+   ,#+ORG_SHOW_MACRO: cc $2
+   #+end_example
+
+2. An entry in =org-show-macro-templates=, in the configuration.  The
+   template is a string like the above, or a function that gets the
+   arguments and returns the text to show, which may have faces.  For
+   example, to show the text on a coloured background:
+
+   #+begin_src emacs-lisp
+   (setq org-show-macro-templates
+         '(("cc" . (lambda (color text)
+                     (propertize text 'face `(:background ,color))))))
+   #+end_src
+
+3. Org's own expansion, as in export: the =#+MACRO:= definitions and the
+   built-in macros (={{{title}}}=, ={{{author}}}=, ={{{date}}}=,
+   ={{{time(%Y)}}}=, ={{{n}}}=, ={{{keyword(...)}}}=,
+   ={{{property(...)}}}= and so on).  Export snippets for other back-ends,
+   such as =@@latex:...@@=, are left out.  The contents of
+   =@@org-show:...@@= snippets are kept, so one =#+MACRO:= line can also
+   carry its show version:
+
+   #+begin_example
+   ,#+MACRO: cc @@latex:\cellcolor{$1}$2@@@@org-show:$2@@
+   #+end_example
+
+A macro whose expansion is empty (like =cc= above with no show
+definition) or that is not defined at all is left as it is, with its
+braces hidden (=org-show-hide-macro-markers=).
+
+Expansions are shown as Org text: =*bold*= and =/italic/= in an
+expansion look as they do on the slide, and macros inside an expansion
+are expanded too.  Macros in =#+TITLE=, =#+AUTHOR= etc. are expanded on
+the title page.  =#+MACRO:= definitions that evaluate Lisp (=(eval
+...)=) are not expanded, so starting a show never runs code from the
+file; use =org-show-macro-templates= for those.  A macro inside a table
+cell may un-align the table, since the table was aligned to the macro
+text.
+
+To turn expansion off, set =org-show-expand-macros= to nil (or
+=#+ORG_SHOW: macros:nil=).
+
 ** Paragraphs
 Line breaks inside a paragraph are displayed as spaces, so hard-wrapped
 source text is rewrapped to the column width.  The file is not changed.
@@ -217,14 +325,16 @@ When =org-show-hide-clutter= is non-nil, the following are hidden:
 - source blocks with =:exports results= or =:exports none= (their results,
   such as plots, stay visible)
 - =emacs-lisp-slide= blocks
-- standalone raw LaTeX lines such as =\vspace{-0.5cm}=
+- standalone raw LaTeX lines such as =\vspace{-0.5cm}= (but not the lines
+  of equations, such as =\begin{equation}=)
 - blank lines left at the top of a column
 - the =:slide:= tag
 
 * Beautification
 
 During the presentation, org-show turns on the minor modes in
-=org-show-beautify-modes= in the slide buffers, and hides emphasis markers.
+=org-show-beautify-modes= in the slide buffers, and hides emphasis and
+macro markers.
 They are turned off when the presentation stops, unless they were already on
 before.  Normal editing is not affected.
 
@@ -237,6 +347,9 @@ The default, ='(org-modern-mode variable-pitch-mode)=, gives:
 - proportional text, from the built-in =variable-pitch-mode=
 - =*bold*= shown as *bold* without the asterisks
   (=org-show-hide-emphasis-markers=)
+- macros that are not expanded (see [[*Macros][Macros]]) shown without their
+  braces, e.g. =cc(red,text)= (=org-show-hide-macro-markers=, which turns
+  on =org-hide-macro-markers=)
 
 The bullets replace org-modern's own (small) ones only during the show;
 org-modern is unchanged elsewhere.
@@ -276,44 +389,128 @@ the presentation again:
 
 ;; keep the *, /, = emphasis markers visible
 (setq org-show-hide-emphasis-markers nil)
+
+;; keep the {{{ }}} around macros visible
+(setq org-show-hide-macro-markers nil)
 #+end_src
 
 Note: in variable-pitch text, Org tables and code blocks can lose their
 alignment.
 
+* Per-file settings
+
+Every setting below can be set globally (e.g. in =use-scimax.el=) and
+overridden for one presentation from inside its Org file, in two ways.
+
+** The =#+ORG_SHOW:= keyword
+Put one or more lines like this near the top of the file:
+
+#+begin_example
+,#+ORG_SHOW: modern:nil variable-pitch:t bullets:("➤" "–") image-width:0.7
+,#+ORG_SHOW: animate:nil column-scale:1
+#+end_example
+
+The syntax is that of =#+OPTIONS=: =key:value= pairs separated by spaces,
+with the values written as Lisp (=t=, =nil=, numbers, strings in double
+quotes, lists in parentheses).  The keyword is read each time a show starts,
+so changes take effect at the next start.  When the show stops, the previous
+values come back.  Beamer and other exporters ignore the keyword.
+
+| Key              | Setting                                               | Value                      |
+|------------------+-------------------------------------------------------+----------------------------|
+| =modern=         | add or remove =org-modern-mode= in the beautify modes | =t= / =nil=                |
+| =variable-pitch= | add or remove =variable-pitch-mode=                   | =t= / =nil=                |
+| =modes=          | =org-show-beautify-modes=                             | list of =...-mode= symbols |
+| =disable=        | =org-show-disable-modes=                              | list of =...-mode= symbols |
+| =emphasis=       | =org-show-hide-emphasis-markers=                      | =t= / =nil=                |
+| =macro-markers=  | =org-show-hide-macro-markers=                         | =t= / =nil=                |
+| =macros=         | =org-show-expand-macros=                              | =t= / =nil=                |
+| =bullets=        | =org-show-list-bullets=                               | list of strings, or =nil=  |
+| =list-indent=    | =org-show-list-indent=                                | number                     |
+| =hanging=        | =org-show-hanging-indent=                             | =t= / =nil=                |
+| =title-page=     | =org-show-title-page=                                 | =t= / =nil=                |
+| =section-pages=  | =org-show-section-pages=                              | =t= / =nil=                |
+| =animate=        | =org-show-animate-pages=                              | =t= / =nil=                |
+| =page-scale=     | =org-show-page-text-scale=                            | number                     |
+| =text-scale=     | =org-show-text-scale=                                 | number                     |
+| =column-scale=   | =org-show-column-text-scale=                          | number                     |
+| =title-scale=    | =org-show-title-text-scale=                           | number                     |
+| =min-scale=      | =org-show-min-text-scale=                             | number                     |
+| =fit=            | =org-show-fit-text=                                   | =t= / =nil=                |
+| =image-width=    | =org-show-image-width-fraction=                       | number                     |
+| =image-height=   | =org-show-image-height-fraction=                      | number                     |
+| =clutter=        | =org-show-hide-clutter=                               | =t= / =nil=                |
+| =latex-size=     | =org-show-latex-size=                                 | number                     |
+| =latex-scale=    | =org-show-latex-scale=                                | number                     |
+| =center-math=    | =org-show-center-display-math=                        | =t= / =nil=                |
+
+Unknown keys and invalid values are skipped with a message in the echo
+area, and the show starts anyway.  For safety, =modes= and =disable= only
+accept symbols whose names end in =-mode=.
+
+** File-local variables
+The usual Emacs mechanism also works, with a block at the end of the file:
+
+#+begin_example
+# Local Variables:
+# org-show-column-text-scale: 1
+# org-show-list-bullets: ("➤" "–")
+# org-show-section-pages: nil
+# End:
+#+end_example
+
+These are read when the file is opened, so after changing the block, re-open
+the file (=M-x revert-buffer=).  The simple settings (on/off flags, numbers
+and the bullet list) are marked safe, so Emacs does not ask about them.
+=org-show-beautify-modes= and =org-show-disable-modes= are not, since a file
+could use them to turn on any mode; Emacs asks before using them (answer =!=
+to accept a value permanently).
+
+** Precedence
+=#+ORG_SHOW:= overrides a file-local variable, which overrides the global
+value.  A size changed with ~C-=~ / ~C--~ during the show changes the value
+that is in effect (the local one if there is one).
+
 * Settings
 
-| Variable                         | Default                                        | Meaning                                                  |
-|----------------------------------+------------------------------------------------+----------------------------------------------------------|
-| =org-show-text-scale=            | 4                                              | maximum text scale on slides without columns             |
-| =org-show-column-text-scale=     | 2                                              | maximum text scale in columns                            |
-| =org-show-title-text-scale=      | 2                                              | text scale of the title strip                            |
-| =org-show-min-text-scale=        | -6                                             | smallest scale used when fitting text                    |
-| =org-show-fit-text=              | t                                              | shrink text to fit the window                            |
-| =org-show-image-width-fraction=  | 0.8                                            | maximum image width, as a fraction of the window width   |
-| =org-show-image-height-fraction= | 0.8                                            | maximum image height, as a fraction of the window height |
-| =org-show-hide-clutter=          | t                                              | hide drawers, keywords, src blocks and raw LaTeX         |
-| =org-show-beautify-modes=        | ='(org-modern-mode variable-pitch-mode)=       | modes turned on during the presentation                          |
-| =org-show-disable-modes=         | ='(org-indent-mode display-line-numbers-mode)= | modes turned off during the presentation                         |
-| =org-show-list-bullets=          | ='("●" "○" "■" "□")=                           | list bullets by nesting depth                            |
-| =org-show-list-indent=           | 4                                              | indentation per list level, in spaces                    |
-| =org-show-hanging-indent=        | t                                              | indent sub-items and align wrapped lines of items        |
-| =org-show-hide-emphasis-markers= | t                                              | hide emphasis markers during the presentation                    |
-| =org-show-title-page=            | t                                              | presentation a title page                                        |
-| =org-show-section-pages=         | t                                              | presentation section pages                                       |
-| =org-show-animate-pages=         | t                                              | animate the title and section pages                      |
-| =org-show-page-text-scale=       | 5                                              | text scale of the title and section pages                |
-| =org-show-slide-tag=             | "slide"                                        | tag that marks slides                                    |
+| Variable                             | Default                                        | Meaning                                                  |
+|--------------------------------------+------------------------------------------------+----------------------------------------------------------|
+| =org-show-text-scale=                | 4                                              | maximum text scale on slides without columns             |
+| =org-show-column-text-scale=         | 2                                              | maximum text scale in columns                            |
+| =org-show-title-text-scale=          | 2                                              | text scale of the title strip                            |
+| =org-show-min-text-scale=            | -6                                             | smallest scale used when fitting text                    |
+| =org-show-fit-text=                  | t                                              | shrink text to fit the window                            |
+| =org-show-image-width-fraction=      | 0.8                                            | maximum image width, as a fraction of the window width   |
+| =org-show-image-height-fraction=     | 0.8                                            | maximum image height, as a fraction of the window height |
+| =org-show-hide-clutter=              | t                                              | hide drawers, keywords, src blocks and raw LaTeX         |
+| =org-show-latex-size=                | 0.8                                            | size of equations relative to the text                   |
+| =org-show-latex-scale=               | 4.0                                            | scale at which equation images are rendered              |
+| =org-show-center-display-math=       | nil                                            | centre display equations                                 |
+| =org-show-latex-preview-drop-regexp= | beamer commands                                | preamble lines left out of equation previews             |
+| =org-show-beautify-modes=            | ='(org-modern-mode variable-pitch-mode)=       | modes turned on during the presentation                  |
+| =org-show-disable-modes=             | ='(org-indent-mode display-line-numbers-mode)= | modes turned off during the presentation                 |
+| =org-show-list-bullets=              | ='("●" "○" "■" "□")=                           | list bullets by nesting depth                            |
+| =org-show-list-indent=               | 4                                              | indentation per list level, in spaces                    |
+| =org-show-hanging-indent=            | t                                              | indent sub-items and align wrapped lines of items        |
+| =org-show-hide-emphasis-markers=     | t                                              | hide emphasis markers during the presentation            |
+| =org-show-hide-macro-markers=        | t                                              | hide the {{{ }}} of macros during the presentation       |
+| =org-show-expand-macros=             | t                                              | show macros as their expansion                           |
+| =org-show-macro-templates=           | nil                                            | macro definitions for the show                           |
+| =org-show-title-page=                | t                                              | show a title page                                        |
+| =org-show-section-pages=             | t                                              | show section pages                                       |
+| =org-show-animate-pages=             | t                                              | animate the title and section pages                      |
+| =org-show-page-text-scale=           | 5                                              | text scale of the title and section pages                |
+| =org-show-slide-tag=                 | "slide"                                        | tag that marks slides                                    |
 
 The title and section pages use these faces, which can be customized with
 =M-x customize-face=:
 
-| Face                     | Used for                     |
-|--------------------------+------------------------------|
-| =org-show-page-title=    | title on the title page      |
-| =org-show-page-subtitle= | subtitle                     |
-| =org-show-page-info=     | author and date              |
-| =org-show-page-section=  | heading on a section page    |
+| Face                     | Used for                             |
+|--------------------------+--------------------------------------|
+| =org-show-page-title=    | title on the title page              |
+| =org-show-page-subtitle= | subtitle                             |
+| =org-show-page-info=     | author and date                      |
+| =org-show-page-section=  | heading on a section page            |
 | =org-show-bullet=        | list bullets during the presentation |
 
 * Tips

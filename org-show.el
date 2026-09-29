@@ -45,6 +45,9 @@
 ;; src blocks with :exports results or none, and standalone raw LaTeX
 ;; lines such as \vspace{...}) is hidden during the show.
 ;;
+;; LaTeX equations are sized to the text of the slide, so they shrink
+;; and grow with it.
+;;
 ;; Load this file instead of org-show.el; it provides the same feature.
 
 ;;; Code:
@@ -54,6 +57,7 @@
 (require 'org)
 (require 'ob-core)
 (require 'org-element)
+(require 'org-macro)
 (require 'face-remap)
 
 ;;* Variables
@@ -69,13 +73,37 @@
   "Regex to identify slide tags.")
 
 (defvar org-show-latex-scale 4.0
-  "Scale for latex preview.")
+  "Scale at which LaTeX previews are rendered during the show.
+This sets the resolution only: the equations are then displayed at
+the size of the text, see `org-show-latex-size'.  A high value keeps
+them sharp when the text is large.")
 
-(defvar org-show-original-latex-scale
-  (if (boundp 'org-format-latex-options)
-      (plist-get org-format-latex-options :scale)
-    nil)
-  "Original scale for latex preview, so we can reset it.")
+(defvar org-show-latex-size 0.8
+  "Size of LaTeX equations relative to the text on the slides.
+At 1.0, the LaTeX font is as large as the text font.  Equations grow
+and shrink with the text of the slide.")
+
+(defvar org-show-latex-preview-drop-regexp
+  "^[ \t]*\\\\\\(?:setbeamer\\|use[a-z]*theme\\|AtBegin\\(?:Section\\|Subsection\\|Part\\|Lecture\\)\\|beamertemplate\\|logo\\|titlegraphic\\|institute\\).*"
+  "Lines of the LaTeX preamble left out when previewing equations.
+Org previews equations with the article class, but it adds the
+#+LATEX_HEADER lines of the file, which in a beamer presentation use
+commands such as \\setbeamersize that article does not know.  LaTeX
+then prints their arguments, e.g. \"description width=0.1cm\", in
+every equation image.  Set to nil to keep all lines.")
+
+(defvar org-show--latex-point-pixels nil
+  "Pixels per LaTeX point in preview images, as (KEY . PIXELS).
+KEY is (PROCESS SCALE PREAMBLE-HASH), see `org-show--latex-point'.")
+
+(defvar-local org-show--latex-point nil
+  "Pixels per LaTeX point in the preview images of this buffer.")
+
+(defvar org-show-center-display-math nil
+  "If non-nil, center display equations horizontally, as LaTeX does.
+By default they are left aligned, like the text.
+Display equations are \\=\\[...\\], $$...$$ and LaTeX environments
+on lines of their own.  Inline math is not moved.")
 
 (defvar org-show-text-scale 4
   "Largest text scale for slides without columns.
@@ -147,6 +175,42 @@ the list layout, and line numbers do not belong on slides.")
 
 (defvar org-show-hide-emphasis-markers t
   "If non-nil, hide the *, /, = etc. emphasis markers during the show.")
+
+(defvar org-show-hide-macro-markers t
+  "If non-nil, hide the {{{ and }}} around macros during the show.
+This turns on `org-hide-macro-markers' in the slide buffers.  It
+matters for macros that are not expanded, see
+`org-show-expand-macros'.")
+
+(defvar org-show-expand-macros t
+  "If non-nil, show Org macros on the slides as their expansion.
+A macro is expanded with, in this order of preference:
+
+- its #+ORG_SHOW_MACRO: definition in the file, written like a
+  #+MACRO: definition, e.g. \"#+ORG_SHOW_MACRO: cc $2\";
+- its definition in `org-show-macro-templates';
+- Org's own expansion: #+MACRO: definitions and the built-in macros
+  such as title, author, date and time.  Export snippets for other
+  back-ends, such as @@latex:...@@, are left out of the result, and
+  the contents of @@org-show:...@@ snippets are kept.
+
+Macros that expand to nothing are left as they are.  The buffer text
+is not changed.")
+
+(defvar org-show-macro-templates nil
+  "Definitions of Org macros for the show, as (NAME . TEMPLATE).
+TEMPLATE is a string like the definition in a #+MACRO: line, with
+$1, $2... for the arguments, or a function that is called with the
+arguments as strings and returns the string to show, which may have
+faces.  For example:
+
+  (setq org-show-macro-templates
+        \\='((\"cc\" . (lambda (color text)
+                     (propertize text \\='face
+                                 \\=`(:background ,color))))))
+
+#+ORG_SHOW_MACRO: lines in the file take precedence.  See
+`org-show-expand-macros'.")
 
 (defvar org-modern-tag)
 (defvar org-modern-list)
@@ -245,6 +309,13 @@ Used to reset the state after the show.")
   "Return the base buffer of the current buffer."
   (or (buffer-base-buffer) (current-buffer)))
 
+(defun org-show--show-buffer ()
+  "Return the buffer of the presentation being shown.
+This is where the settings are read, since they may be local to it."
+  (or (and org-show-presentation-file
+           (find-buffer-visiting org-show-presentation-file))
+      (org-show--base-buffer)))
+
 (defun org-show--file ()
   "Return the file of the presentation in the current buffer."
   (buffer-file-name (org-show--base-buffer)))
@@ -276,10 +347,17 @@ Used to reset the state after the show.")
                 "^[ \t]*#\\+\\(?:name\\|results\\|caption\\|attr_[a-z]+\\)\\(?:\\[.*\\]\\)?:.*\n?"
                 end t)
           (org-show--hide-region (match-beginning 0) (match-end 0)))
-        ;; standalone raw LaTeX lines, e.g. \vspace{-0.5cm}
+        ;; standalone raw LaTeX lines, e.g. \vspace{-0.5cm}, but not
+        ;; lines of an equation
         (goto-char beg)
-        (while (re-search-forward "^[ \t]*\\\\[a-zA-Z]+.*\n?" end t)
-          (org-show--hide-region (match-beginning 0) (match-end 0)))
+        (while (re-search-forward "^[ \t]*\\(\\\\[a-zA-Z]+\\).*\n?" end t)
+          (unless (save-excursion
+                    (save-match-data
+                      (org-show--math-p
+                       (org-element-context
+                        (progn (goto-char (match-beginning 1))
+                               (org-element-at-point))))))
+            (org-show--hide-region (match-beginning 0) (match-end 0))))
         ;; src blocks that are not exported as code
         (goto-char beg)
         (while (re-search-forward "^[ \t]*#\\+begin_src\\b" end t)
@@ -367,16 +445,28 @@ Org or scimax inline image settings."
 (defun org-show--reflow ()
   "Display hard-wrapped paragraphs in the accessible region as one line.
 Line breaks inside a paragraph are shown as spaces, so that
-`visual-line-mode' can wrap the text to the window, as LaTeX would."
+`visual-line-mode' can wrap the text to the window, as LaTeX would.
+Display equations (\\=\\[...\\] and $$...$$) keep their own lines."
   (org-element-map (org-element-parse-buffer) 'paragraph
     (lambda (par)
       (let ((beg (org-element-property :contents-begin par))
-            (end (org-element-property :contents-end par)))
+            (end (org-element-property :contents-end par))
+            (math (org-element-map par 'latex-fragment
+                    (lambda (f)
+                      (when (string-match-p "\\`\\(?:\\$\\$\\|\\\\\\[\\)"
+                                            (org-element-property :value f))
+                        (cons (org-element-property :begin f)
+                              (- (org-element-property :end f)
+                                 (org-element-property :post-blank f))))))))
         (when (and beg end)
           (save-excursion
             (goto-char beg)
             (while (re-search-forward "[ \t]*\n[ \t]*" end t)
-              (when (< (match-end 0) end)
+              (when (and (< (match-end 0) end)
+                         (not (cl-some (lambda (m)
+                                         (and (<= (match-beginning 0) (cdr m))
+                                              (>= (match-end 0) (car m))))
+                                       math)))
                 (let ((ov (make-overlay (match-beginning 0) (match-end 0) nil t nil)))
                   (overlay-put ov 'display " ")
                   (push ov org-show--hide-overlays))))))))))
@@ -481,24 +571,178 @@ All windows get the same scale.  Return the scale used."
   (cl-loop
    do (dolist (w wins)
         (with-current-buffer (window-buffer w)
-          (text-scale-set scale)))
+          (text-scale-set scale)
+          (org-show--scale-latex w)))
    until (or (not org-show-fit-text)
              (<= scale org-show-min-text-scale)
              (cl-every #'org-show--fits-p wins))
    do (setq scale (1- scale)))
   scale)
 
+(defun org-show--math-p (el)
+  "Return non-nil if Org element EL is an equation.
+That is a LaTeX environment or a math fragment ($...$, \\(...\\),
+\\=\\[...\\] or $$...$$), not a LaTeX command such as \\vspace{...}."
+  (pcase (org-element-type el)
+    ('latex-environment t)
+    ('latex-fragment
+     (string-match-p "\\`\\(?:\\$\\|\\\\[[(]\\)"
+                     (org-element-property :value el)))))
+
+(defun org-show--latex-overlays ()
+  "Return the LaTeX preview overlays in the accessible part of the buffer."
+  (cl-remove-if-not
+   (lambda (o) (eq (overlay-get o 'org-overlay-type) 'org-latex-overlay))
+   (overlays-in (point-min) (point-max))))
+
+(defun org-show--latex-preview-header ()
+  "Return the preamble for previewing equations in the current buffer.
+It is the preamble Org would use, without the lines matching
+`org-show-latex-preview-drop-regexp'.  Return nil when nothing needs
+to be left out, or when the process in
+`org-preview-latex-default-process' has its own preamble."
+  (when (and org-show-latex-preview-drop-regexp
+             (not (plist-get (cdr (assq org-preview-latex-default-process
+                                        org-preview-latex-process-alist))
+                             :latex-header))
+             (require 'ox-latex nil t))
+    (let* ((full (ignore-errors
+                   (org-latex-make-preamble
+                    (org-export-get-environment (org-export-get-backend 'latex))
+                    org-format-latex-header
+                    'snippet)))
+           (header (and full
+                        (replace-regexp-in-string
+                         (concat org-show-latex-preview-drop-regexp "\n?")
+                         "" full))))
+      (unless (equal header full) header))))
+
 (defun org-show--preview-latex ()
-  "Preview LaTeX math in the accessible part of the current buffer."
+  "Preview LaTeX math in the accessible part of the current buffer.
+The images are rendered at `org-show-latex-scale', centered if they
+are display equations, and sized to the text by
+`org-show--scale-latex'."
   (when (save-excursion
           (goto-char (point-min))
           (re-search-forward "\\$\\|\\\\(\\|\\\\\\[\\|\\\\begin{" nil t))
-    (let ((org-format-latex-options (plist-put (copy-sequence org-format-latex-options)
-                                               :scale org-show-latex-scale)))
+    (let* ((header (org-show--latex-preview-header))
+           (proc org-preview-latex-default-process)
+           (org-preview-latex-process-alist
+            (if header
+                (cons (cons proc (plist-put (copy-sequence
+                                             (cdr (assq proc org-preview-latex-process-alist)))
+                                            :latex-header header))
+                      org-preview-latex-process-alist)
+              org-preview-latex-process-alist))
+           (org-format-latex-options
+            (plist-put (plist-put (copy-sequence org-format-latex-options)
+                                  :scale org-show-latex-scale)
+                       ;; Org's image cache ignores the #+LATEX_HEADER
+                       ;; lines, so make images with another preamble
+                       ;; get other file names
+                       :org-show-header (and header (sha1 header)))))
       (ignore-errors
         (if (fboundp 'org-latex-preview)
             (org-latex-preview '(16))
-          (with-no-warnings (org-preview-latex-fragment '(4))))))))
+          (with-no-warnings (org-preview-latex-fragment '(4)))))
+      (setq org-show--latex-point
+            (org-show--measure-latex-point
+             (list proc org-show-latex-scale (and header (sha1 header))))))
+    ;; an environment's overlay starts at its #+NAME: etc. lines, which
+    ;; may be hidden as clutter, and a hidden start hides the image
+    (dolist (ov (org-show--latex-overlays))
+      (save-excursion
+        (goto-char (overlay-start ov))
+        (while (looking-at "[ \t]*#\\+.*\n") (goto-char (match-end 0)))
+        (when (< (overlay-start ov) (point) (overlay-end ov))
+          (move-overlay ov (point) (overlay-end ov)))))
+    (org-show--center-latex)
+    (org-show--scale-latex)))
+
+(defun org-show--measure-latex-point (key)
+  "Return the pixels per LaTeX point in preview images made now.
+It is measured once for each KEY by previewing a 10pt square with the
+current preview settings, and cached in `org-show--latex-point-pixels'."
+  (or (cdr (assoc key org-show--latex-point-pixels))
+      (let* ((proc org-preview-latex-default-process)
+             (type (or (plist-get (cdr (assq proc org-preview-latex-process-alist))
+                                  :image-output-type)
+                       "png"))
+             (file (make-temp-file "org-show-ltx" nil (concat "." type)))
+             (height (ignore-errors
+                       (org-create-formula-image "$\\rule{10pt}{10pt}$" file
+                                                 org-format-latex-options
+                                                 (current-buffer) proc)
+                       (cdr (image-size (create-image file nil nil :scale 1) t)))))
+        (ignore-errors (delete-file file))
+        (when (and (numberp height) (> height 0))
+          (push (cons key (/ height 10.0)) org-show--latex-point-pixels)
+          (/ height 10.0)))))
+
+(defun org-show--latex-display-scale ()
+  "Return the image scale that sizes LaTeX previews to the current text.
+The 10pt LaTeX font is matched to the text font: 12pt, the LaTeX line
+spacing, is shown as high as a line of text.  This follows the text
+scale and `variable-pitch-mode'.  `org-show-latex-size' scales the
+result.  If the preview size could not be measured, fall back to
+`org-format-latex-options' :scale at text scale 0."
+  (* org-show-latex-size
+     (if org-show--latex-point
+         (/ (default-font-height) 12.0 org-show--latex-point)
+       (* (/ (float (or (plist-get org-format-latex-options :scale) 1.0))
+             org-show-latex-scale)
+          (expt text-scale-mode-step text-scale-mode-amount)))))
+
+(defun org-show--center-string (image)
+  "Return a string that moves IMAGE to the center of the window."
+  (propertize " " 'display `(space :align-to (- center (0.5 . ,image)))))
+
+(defun org-show--scale-latex (&optional win)
+  "Size the LaTeX previews in the accessible region to the current text.
+See `org-show--latex-display-scale'.  Images are also kept within the
+width of window WIN (default: the selected window), since LaTeX
+environments with equation numbers are as wide as a LaTeX page."
+  (let ((scale (org-show--latex-display-scale))
+        (max-w (window-body-width (or win (selected-window)) t)))
+    (dolist (ov (org-show--latex-overlays))
+      (let ((spec (overlay-get ov 'display))
+            (center (overlay-get ov 'org-show-center)))
+        (when (eq (car-safe spec) 'image)
+          (let ((props (copy-sequence (cdr spec))))
+            (setq props (plist-put props :scale scale))
+            (setq spec (cons 'image (plist-put props :max-width max-w))))
+          (overlay-put ov 'display spec)
+          (when (and center (overlay-buffer center))
+            (overlay-put center 'before-string (org-show--center-string spec))))))))
+
+(defun org-show--display-math-p (ov)
+  "Return non-nil if LaTeX preview overlay OV is a display equation.
+That is a LaTeX environment, or \\=\\[...\\] or $$...$$ on lines of its
+own."
+  (save-excursion
+    (goto-char (overlay-start ov))
+    (skip-chars-forward " \t")
+    (or (looking-at-p "\\\\begin{")
+        (and (looking-at-p "\\\\\\[\\|\\$\\$")
+             (save-excursion (skip-chars-backward " \t") (bolp))
+             (progn (goto-char (overlay-end ov))
+                    (skip-chars-forward " \t")
+                    (eolp))))))
+
+(defun org-show--center-latex ()
+  "Center the display equations in the accessible region.
+Each gets an overlay whose `before-string' aligns the image to the
+center of the window; `org-show--scale-latex' keeps it up to date
+when the image is resized."
+  (when org-show-center-display-math
+    (dolist (ov (org-show--latex-overlays))
+      (when (and (eq (car-safe (overlay-get ov 'display)) 'image)
+                 (org-show--display-math-p ov))
+        (let ((center (make-overlay (overlay-start ov) (overlay-end ov) nil t nil)))
+          (overlay-put center 'before-string
+                       (org-show--center-string (overlay-get ov 'display)))
+          (overlay-put ov 'org-show-center center)
+          (push center org-show--hide-overlays))))))
 
 (defun org-show--hide-drawers ()
   "Fold drawers in the accessible part of the current buffer."
@@ -539,6 +783,7 @@ I is the column index, used to name the indirect buffer."
       (org-show--hide-clutter (point-min) (point-max))
       (org-show--hide-drawers)
       (org-show--reflow)
+      (org-show--expand-macros)
       (org-show--style-lists)
       (org-show--preview-latex)
       (org-show--show-images win)
@@ -561,6 +806,7 @@ The current buffer must be the base buffer, narrowed to the slide."
     (org-show--hide-clutter (point-min) (point-max))
     (org-show--hide-drawers)
     (org-show--reflow)
+    (org-show--expand-macros)
     (org-show--style-lists)
     (org-show--preview-latex)
     (org-show--hide-mode-line title-win)
@@ -601,6 +847,134 @@ The current buffer must be the base buffer, narrowed to the slide."
     (when (buffer-live-p buf) (kill-buffer buf)))
   (setq org-show--column-buffers '()))
 
+;;** Per-file settings
+
+;; File-local variables: the simple settings are safe, so Emacs does not
+;; ask about them.  The mode lists are not marked safe, since a file
+;; could use them to turn on any mode.
+(dolist (var '(org-show-fit-text org-show-hide-clutter org-show-title-page
+               org-show-section-pages org-show-animate-pages
+               org-show-hanging-indent org-show-hide-emphasis-markers
+               org-show-hide-macro-markers org-show-expand-macros
+               org-show-center-display-math))
+  (put var 'safe-local-variable #'booleanp))
+(dolist (var '(org-show-text-scale org-show-column-text-scale
+               org-show-title-text-scale org-show-min-text-scale
+               org-show-page-text-scale org-show-image-width-fraction
+               org-show-image-height-fraction org-show-list-indent
+               org-show-latex-size org-show-latex-scale))
+  (put var 'safe-local-variable #'numberp))
+(put 'org-show-list-bullets 'safe-local-variable #'org-show--string-list-p)
+(put 'org-show-slide-tag 'safe-local-variable #'stringp)
+
+(defun org-show--string-list-p (value)
+  "Return non-nil if VALUE is a list of strings."
+  (and (listp value) (seq-every-p #'stringp value)))
+
+(defun org-show--mode-list-p (value)
+  "Return non-nil if VALUE is a list of mode symbols (names ending in -mode)."
+  (and (listp value)
+       (seq-every-p (lambda (m)
+                      (and (symbolp m) (string-suffix-p "-mode" (symbol-name m))))
+                    value)))
+
+(defconst org-show--keyword-settings
+  '(("modern" :mode org-modern-mode booleanp)
+    ("variable-pitch" :mode variable-pitch-mode booleanp)
+    ("modes" org-show-beautify-modes org-show--mode-list-p)
+    ("disable" org-show-disable-modes org-show--mode-list-p)
+    ("emphasis" org-show-hide-emphasis-markers booleanp)
+    ("macro-markers" org-show-hide-macro-markers booleanp)
+    ("macros" org-show-expand-macros booleanp)
+    ("bullets" org-show-list-bullets org-show--string-list-p)
+    ("list-indent" org-show-list-indent natnump)
+    ("hanging" org-show-hanging-indent booleanp)
+    ("title-page" org-show-title-page booleanp)
+    ("section-pages" org-show-section-pages booleanp)
+    ("animate" org-show-animate-pages booleanp)
+    ("page-scale" org-show-page-text-scale numberp)
+    ("text-scale" org-show-text-scale numberp)
+    ("column-scale" org-show-column-text-scale numberp)
+    ("title-scale" org-show-title-text-scale numberp)
+    ("min-scale" org-show-min-text-scale numberp)
+    ("fit" org-show-fit-text booleanp)
+    ("image-width" org-show-image-width-fraction numberp)
+    ("image-height" org-show-image-height-fraction numberp)
+    ("clutter" org-show-hide-clutter booleanp)
+    ("latex-size" org-show-latex-size numberp)
+    ("latex-scale" org-show-latex-scale numberp)
+    ("center-math" org-show-center-display-math booleanp))
+  "Keys of the #+ORG_SHOW: keyword.
+Each entry is (KEY VARIABLE PREDICATE), or (KEY :mode MODE PREDICATE)
+for a key that adds MODE to or removes it from
+`org-show-beautify-modes'.")
+
+(defvar-local org-show--saved-settings nil
+  "Settings changed by #+ORG_SHOW:, as (VARIABLE LOCALP . OLD-VALUE).")
+
+(defun org-show--parse-keyword (string)
+  "Parse STRING, the value of #+ORG_SHOW: lines, into (KEY . VALUE) pairs.
+Values are read as Lisp, like the values of #+OPTIONS.  Pairs that
+cannot be read are skipped with a message."
+  (let ((pos 0)
+        (pairs '()))
+    (while (string-match "\\([a-z][a-z-]*\\):" string pos)
+      (let ((key (match-string 1 string)))
+        (setq pos (match-end 0))
+        (condition-case nil
+            (let ((read (read-from-string string pos)))
+              (push (cons key (car read)) pairs)
+              (setq pos (cdr read)))
+          (error
+           (message "org-show: cannot read the value of %s: in #+ORG_SHOW:" key)
+           (setq pos (length string))))))
+    (nreverse pairs)))
+
+(defun org-show--set-setting (var value)
+  "Set VAR to VALUE in this buffer, recording its old state for restoring."
+  (unless (assq var org-show--saved-settings)
+    (push (cons var (cons (local-variable-p var) (symbol-value var)))
+          org-show--saved-settings))
+  (set (make-local-variable var) value))
+
+(defun org-show--apply-keyword-settings ()
+  "Apply the #+ORG_SHOW: settings of the current buffer, locally.
+See `org-show--keyword-settings' for the keys.  Unknown keys and
+invalid values are skipped with a message."
+  (org-show--restore-keyword-settings)
+  (let ((value (mapconcat #'identity
+                          (cdr (assoc "ORG_SHOW" (org-collect-keywords '("ORG_SHOW"))))
+                          " ")))
+    (dolist (pair (org-show--parse-keyword value))
+      (let* ((key (car pair))
+             (val (cdr pair))
+             (entry (assoc key org-show--keyword-settings)))
+        (cond
+         ((null entry)
+          (message "org-show: unknown #+ORG_SHOW: key %s" key))
+         ((eq (nth 1 entry) :mode)
+          (if (not (funcall (nth 3 entry) val))
+              (message "org-show: ignoring %s:%S" key val)
+            (let ((mode (nth 2 entry)))
+              (org-show--set-setting
+               'org-show-beautify-modes
+               (if val
+                   (append (remq mode org-show-beautify-modes) (list mode))
+                 (remq mode org-show-beautify-modes))))))
+         ((not (funcall (nth 2 entry) val))
+          (message "org-show: ignoring %s:%S" key val))
+         (t
+          (org-show--set-setting (nth 1 entry) val)))))))
+
+(defun org-show--restore-keyword-settings ()
+  "Undo `org-show--apply-keyword-settings' in the current buffer."
+  (dolist (saved org-show--saved-settings)
+    (let ((var (car saved)))
+      (if (cadr saved)
+          (set (make-local-variable var) (cddr saved))
+        (kill-local-variable var))))
+  (setq org-show--saved-settings nil))
+
 ;;** Beautify modes
 
 (defun org-show--mode-on-p (mode)
@@ -611,7 +985,7 @@ The current buffer must be the base buffer, narrowed to the slide."
     (and (boundp mode) (symbol-value mode))))
 
 (defun org-show--beautify ()
-  "Turn on `org-show-beautify-modes' and emphasis hiding in this buffer.
+  "Turn on `org-show-beautify-modes' and marker hiding in this buffer.
 Only modes that are installed and not already on are turned on, and
 they are recorded so `org-show--unbeautify' can turn them off.
 Also turn off the modes in `org-show-disable-modes'."
@@ -634,6 +1008,10 @@ Also turn off the modes in `org-show-disable-modes'."
              (not org-hide-emphasis-markers))
     (setq-local org-hide-emphasis-markers t)
     (push 'org-hide-emphasis-markers org-show--beautified))
+  (when (and org-show-hide-macro-markers
+             (not org-hide-macro-markers))
+    (setq-local org-hide-macro-markers t)
+    (push 'org-hide-macro-markers org-show--beautified))
   (when org-show--beautified
     (font-lock-flush)))
 
@@ -654,8 +1032,8 @@ They are recorded so `org-show--unbeautify' can turn them on again."
   (when org-show--beautified
     (dolist (mode org-show--beautified)
       (ignore-errors
-        (if (eq mode 'org-hide-emphasis-markers)
-            (kill-local-variable 'org-hide-emphasis-markers)
+        (if (memq mode '(org-hide-emphasis-markers org-hide-macro-markers))
+            (kill-local-variable mode)
           (funcall mode -1)
           (when (eq mode 'org-modern-mode)
             (kill-local-variable 'org-modern-tag)
@@ -663,14 +1041,132 @@ They are recorded so `org-show--unbeautify' can turn them on again."
     (setq org-show--beautified nil)
     (font-lock-flush)))
 
+;;** Macros
+
+(defun org-show--macro-templates ()
+  "Return the macro templates for the show in the current buffer.
+See `org-show-expand-macros'.  Org's templates come from
+`org-macro-initialize-templates', without #+MACRO: definitions that
+evaluate Lisp: showing a presentation should not run code in it."
+  (org-with-wide-buffer
+   (let* ((kw (org-collect-keywords '("ORG_SHOW_MACRO" "MACRO")))
+          (defs (lambda (key)
+                  (delq nil
+                        (mapcar (lambda (v)
+                                  (when (string-match "\\`\\(\\S-+\\)[ \t]*" v)
+                                    (cons (match-string 1 v) (substring v (match-end 0)))))
+                                (cdr (assoc key kw))))))
+          (show (cl-remove-if (lambda (d) (string-match-p "\\`(eval\\>" (cdr d)))
+                              (funcall defs "ORG_SHOW_MACRO")))
+          (eval-names (mapcar #'car
+                              (cl-remove-if-not
+                               (lambda (d) (string-match-p "\\`(eval\\>" (cdr d)))
+                               (funcall defs "MACRO"))))
+          (org (let ((org-macro-templates nil))
+                 (ignore-errors (org-macro-initialize-templates))
+                 (cl-remove-if (lambda (d) (member-ignore-case (car d) eval-names))
+                               org-macro-templates))))
+     ;; `org-macro-expand' uses the first match
+     (append (reverse show) org-show-macro-templates org))))
+
+(defun org-show--strip-snippets (text)
+  "Return TEXT without export snippets for back-ends other than org-show.
+The contents of @@org-show:...@@ snippets are kept."
+  (replace-regexp-in-string
+   "@@\\([-A-Za-z0-9]+\\):\\(\\(?:.\\|\n\\)*?\\)@@"
+   (lambda (m)
+     (if (string= (downcase (match-string 1 m)) "org-show")
+         (match-string 2 m)
+       ""))
+   text t t))
+
+(defun org-show--macro-string (text templates)
+  "Return the expansion TEXT of a macro, as it should look on a slide.
+Export snippets for other back-ends are removed, the contents of
+@@org-show:...@@ snippets are kept, macros in TEXT are expanded with
+TEMPLATES, and the rest is fontified as Org text, keeping any faces
+TEXT already has."
+  (setq text (org-show--expand-macros-in-string
+              (org-show--strip-snippets text) templates 1))
+  (if (or (string-empty-p (string-trim text))
+          (text-property-not-all 0 (length text) 'face nil text))
+      text
+    (let ((hide-emphasis org-hide-emphasis-markers))
+      (with-temp-buffer
+        (delay-mode-hooks (org-mode))
+        (setq-local org-hide-emphasis-markers hide-emphasis)
+        (insert text)
+        (font-lock-ensure)
+        ;; leave out what Org makes invisible, e.g. emphasis markers
+        (let ((pos (point-min)) (parts '()))
+          (while (< pos (point-max))
+            (let ((next (next-single-char-property-change pos 'invisible)))
+              (unless (invisible-p pos)
+                (push (buffer-substring pos next) parts))
+              (setq pos next)))
+          (apply #'concat (nreverse parts)))))))
+
+(defun org-show--expand-macros ()
+  "Show the macros in the accessible region as their expansion.
+See `org-show-expand-macros'.  This is done with overlays, so the
+buffer text is not changed."
+  (when org-show-expand-macros
+    (let ((templates nil) (initialized nil))
+      (org-element-map (org-element-parse-buffer) 'macro
+        (lambda (macro)
+          (unless initialized
+            (setq templates (org-show--macro-templates)
+                  initialized t))
+          (let* ((value (ignore-errors (org-macro-expand macro templates)))
+                 (string (and value (org-show--macro-string value templates))))
+            (when (and string (not (string-empty-p (string-trim string))))
+              (let ((ov (make-overlay (org-element-property :begin macro)
+                                      (- (org-element-property :end macro)
+                                         (org-element-property :post-blank macro))
+                                      nil t nil)))
+                (overlay-put ov 'display string)
+                (overlay-put ov 'priority 1000)
+                ;; `org-hide-macro-markers' makes the braces invisible,
+                ;; and a display spec on invisible text is not shown; an
+                ;; overlay value not in the invisibility spec wins
+                (overlay-put ov 'invisible 'org-show-macro)
+                (push ov org-show--hide-overlays)))))))))
+
 ;;** Title and section pages
+
+(defun org-show--expand-macros-in-string (string &optional templates depth)
+  "Return STRING with its Org macros expanded, see `org-show-expand-macros'.
+Macros in the expansions are expanded too, up to a few levels deep.
+Macros that cannot be expanded are removed.  TEMPLATES defaults to
+`org-show--macro-templates'; DEPTH is used for the recursion."
+  (let ((depth (or depth 0)))
+    (if (or (not org-show-expand-macros) (> depth 5)
+            (not (string-match-p "{{{" string)))
+        (replace-regexp-in-string "{{{\\(?:.\\|\n\\)*?}}}" "" string t t)
+      (let ((templates (or templates (org-show--macro-templates))))
+        (replace-regexp-in-string
+         "{{{\\([^}(]+\\)\\(?:(\\(\\(?:.\\|\n\\)*?\\))\\)?}}}"
+         (lambda (m)
+           (let* ((key (downcase (string-trim (match-string 1 m))))
+                  (args (and (match-string 2 m)
+                             (org-macro-extract-arguments (match-string 2 m))))
+                  (value (ignore-errors
+                           (org-macro-expand (list 'macro (list :key key :args args))
+                                             templates))))
+             (if value
+                 (org-show--expand-macros-in-string
+                  (org-show--strip-snippets value) templates (1+ depth))
+               "")))
+         string t t)))))
 
 (defun org-show--keyword-lines (value)
   "Split keyword VALUE into lines of plain text.
 LaTeX line breaks (\\\\) start new lines, \\today becomes today's
-date, \\and becomes a comma, and other LaTeX commands and Org macros
-are dropped, keeping their arguments."
-  (let ((value (replace-regexp-in-string "{{{[^}]*}}}" "" (or value ""))))
+date, \\and becomes a comma, Org macros are expanded (see
+`org-show-expand-macros') or dropped, and other LaTeX commands are
+dropped, keeping their arguments."
+  (let ((value (substring-no-properties
+                (org-show--expand-macros-in-string (or value "")))))
     (delq nil
           (mapcar
            (lambda (s)
@@ -728,10 +1224,10 @@ These are the ancestors without the slide tag, outermost first."
   (move-to-column hpos t)
   (insert text))
 
-(defun org-show--show-page (lines)
+(defun org-show--show-page (lines scale animate)
   "Show LINES, a list of (TEXT . FACE), centred on a page of their own.
-With `org-show-animate-pages', the lines are animated in; a key press
-skips the rest of the animation."
+SCALE is the text scale.  With ANIMATE, the lines are animated in; a
+key press skips the rest of the animation."
   (org-show--teardown-columns)
   (delete-other-windows)
   (switch-to-buffer (get-buffer-create org-show--page-buffer))
@@ -742,7 +1238,7 @@ skips the rest of the animation."
   (org-show--disable-modes)
   (setq-local indent-tabs-mode nil)
   (org-show--hide-mode-line (selected-window))
-  (text-scale-set (or org-show-page-text-scale 5))
+  (text-scale-set (or scale 5))
   (let* ((cols (window-max-chars-per-line))
          (rows (/ (window-body-height nil t) (window-font-height nil 'default)))
          (vpos (max 0 (/ (- rows (length lines)) 2))))
@@ -750,7 +1246,7 @@ skips the rest of the animation."
       (let* ((text (car line))
              (hpos (max 0 (/ (- cols (string-width text)) 2))))
         (unless (string= text "")
-          (if (and org-show-animate-pages (not (input-pending-p)))
+          (if (and animate (not (input-pending-p)))
               (animate-string text vpos hpos)
             (org-show--place-string text vpos hpos))
           (when (cdr line)
@@ -766,14 +1262,19 @@ skips the rest of the animation."
 
 (defun org-show--show-special (entry n)
   "Show the title or section page ENTRY, which is slide N."
-  (let ((lines (with-current-buffer (find-file-noselect org-show-presentation-file)
-                 (save-restriction
-                   (widen)
-                   (pcase (car entry)
-                     (:title (org-show--title-lines))
-                     (:section (org-show--section-lines (cadr entry))))))))
+  (let (lines scale animate)
+    ;; read everything in the presentation buffer, where the settings
+    ;; may be buffer-local (file-local variables, #+ORG_SHOW:)
+    (with-current-buffer (org-show--show-buffer)
+      (save-restriction
+        (widen)
+        (setq lines (pcase (car entry)
+                      (:title (org-show--title-lines))
+                      (:section (org-show--section-lines (cadr entry))))
+              scale org-show-page-text-scale
+              animate org-show-animate-pages)))
     (set-frame-name (format "%-180s%15s%s" (car (car lines)) "slide " n))
-    (org-show--show-page lines)
+    (org-show--show-page lines scale animate)
     (message "")))
 
 (defun org-show--entry-title (entry)
@@ -845,6 +1346,7 @@ On a title or section page, show that page again."
       (org-show--hide-clutter (point-min) (point-max))
       (org-show--hide-drawers)
       (org-show--reflow)
+      (org-show--expand-macros)
       (org-show--style-lists)
       ;; preview equations in the current subtree
       (org-show--preview-latex)
@@ -900,6 +1402,7 @@ On a title or section page, show that page again."
     (goto-char pos))
   (setq org-show-presentation-file (org-show--file))
   (widen)
+  (org-show--apply-keyword-settings)
   (org-show-initialize)
   (org-show--goto-slide-heading)
   (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-show-slide-titles))))
@@ -960,6 +1463,7 @@ first slide of each section if `org-show-section-pages' is non-nil."
   (setq org-tags-column org-show-tags-column)
   (org-set-tags-command '(4))
 
+  (org-show--apply-keyword-settings)
   (org-show-initialize)
   ;; hide slide tags
   (save-excursion
@@ -1005,9 +1509,6 @@ Try to reset the state of your Emacs. It isn't perfect ;)"
   (widen)
   (org-show--org-images)
 
-  ;; reset latex scale
-  (plist-put org-format-latex-options :scale org-show-original-latex-scale)
-
   ;; clean up temp images
   (mapc (lambda (x)
           (let ((bname (file-name-nondirectory x)))
@@ -1027,6 +1528,8 @@ Try to reset the state of your Emacs. It isn't perfect ;)"
 
   (when org-show-presentation-file (find-file org-show-presentation-file))
   (widen)
+  ;; the equation images were made for the slides
+  (org-clear-latex-preview)
   (text-scale-set 0)
   (delete-other-windows)
   (setq org-show-presentation-file nil)
@@ -1034,6 +1537,7 @@ Try to reset the state of your Emacs. It isn't perfect ;)"
   (set-frame-name (if (buffer-file-name)
                       (abbreviate-file-name (buffer-file-name))))
   (org-show--unbeautify)
+  (org-show--restore-keyword-settings)
   (setq org-tags-column org-show-original-tags-column)
   (org-set-tags-command '(4))
   (setq *org-show-running* nil)
@@ -1114,8 +1618,11 @@ shrunk to fit."
          (shown (with-current-buffer (if page (current-buffer)
                                        (or col (org-show--base-buffer)))
                   (bound-and-true-p text-scale-mode-amount)))
-         (new (+ (or shown (symbol-value var)) delta)))
-    (set var new)
+         (new (+ (or shown (buffer-local-value var (org-show--show-buffer))) delta)))
+    ;; in the presentation buffer, so a value local to it (file-local
+    ;; variable or #+ORG_SHOW:) is changed there, and a global one globally
+    (with-current-buffer (org-show--show-buffer)
+      (set var new))
     (if *org-show-running*
         (org-show-goto-slide org-show-current-slide-number)
       (text-scale-set new))
