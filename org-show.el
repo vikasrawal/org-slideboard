@@ -189,6 +189,49 @@ cell can show an expanded macro, an equation image or proportional
 text, so the columns would not line up.  The padding is done with
 overlays, so the file is not changed.")
 
+(defvar org-show-src-display 'exports
+  "How source blocks with results are shown on the slides.
+- `exports': follow each block's :exports header: code shows the
+  code, results the results, both the code and the results side by
+  side, and none nothing.
+- `results': show only the results of every block.
+- `both': show the code and the results of every block side by side.
+
+It can be set for one file with #+ORG_SHOW: src:both, and for one
+slide (or a section of slides) with the property ORG_SHOW_SRC.  With
+both, the first such block of a slide is shown in two windows, the
+code on the left and the results on the right; see
+`org-show-execute-src-block' and `org-show-src-repl-functions'.")
+
+(defvar org-show-src-code-width 0.5
+  "Share of the space used for the code when code and results are shown.
+It is a fraction of the width when they are side by side, and of the
+height when the code is above the results, see `org-show-src-split'.")
+
+(defvar org-show-src-split 'left-right
+  "How code and results are arranged when both are shown.
+`left-right' puts the code on the left and the results on the
+right; `top-bottom' puts the code above the results.  It can be set
+for one file with #+ORG_SHOW: src-split:top-bottom, and for one slide
+or beamer column (or a section) with the property ORG_SHOW_SRC_SPLIT.
+See `org-show-src-display'.")
+
+(defvar org-show-src-repl-functions
+  '(("R" . org-show--start-R)
+    ("python" . org-show--start-python))
+  "Functions that start a REPL for editing a block during the show.
+Each element is (LANGUAGE . FUNCTION).  FUNCTION is called with no
+arguments and returns the REPL buffer.  When a source block is opened
+for editing (\\[org-edit-special]) during the show, the editing buffer
+is shown next to the REPL, where its code can be evaluated.  Blocks
+with a :session header use that session instead, in any language.")
+
+(defvar org-show--split-direction nil
+  "Direction of the code and results split of the slide being shown.")
+
+(defvar org-show--slide-src nil
+  "The ORG_SHOW_SRC setting of the slide being shown, a symbol or nil.")
+
 (defvar-local org-show--table-overlays nil
   "Overlays made by `org-show--align-tables' in this buffer.")
 
@@ -375,12 +418,11 @@ This is where the settings are read, since they may be local to it."
                  (info (save-excursion
                          (goto-char block-beg)
                          (ignore-errors (org-babel-get-src-block-info 'no-eval))))
-                 (exports (cdr (assq :exports (nth 2 info))))
                  (block-end (save-excursion
                               (when (re-search-forward "^[ \t]*#\\+end_src.*\n?" end t)
                                 (match-end 0)))))
             (when (and block-end
-                       (or (member exports '("results" "none"))
+                       (or (memq (org-show--src-mode info) '(results none))
                            (equal (car info) "emacs-lisp-slide")))
               (org-show--hide-region block-beg block-end))
             (when block-end (goto-char block-end))))
@@ -424,13 +466,28 @@ direct children with a BEAMER_col property or a BMCOL tag."
           (when (<= (car c) 0) (setcar c (/ 1.0 n)))))
       cols)))
 
+(defvar org-show--image-times (make-hash-table :test #'equal)
+  "Modification times of the image files shown, by file name.")
+
+(defun org-show--fresh-image-file (file)
+  "Make sure FILE is shown as it is now, not as Emacs cached it.
+Emacs caches images by file name, so a plot rewritten by a code
+block would still show the old picture.  When FILE changed since it
+was last shown, it is removed from the image cache."
+  (let ((time (file-attribute-modification-time (file-attributes file)))
+        (old (gethash file org-show--image-times)))
+    (when (and old (not (equal old time)))
+      (clear-image-cache file))
+    (puthash file time org-show--image-times)))
+
 (defun org-show--show-images (&optional win)
   "Display image links in the accessible part of the current buffer.
 Images are scaled down to fit in window WIN (default: the selected
 window), using `org-show-image-width-fraction' and
 `org-show-image-height-fraction'.  The images are drawn with our own
 high-priority overlays, so they do not depend on (and override) the
-Org or scimax inline image settings."
+Org or scimax inline image settings.  Image files that changed since
+they were last shown are read again."
   (let* ((win (or win (selected-window)))
          (max-w (floor (* org-show-image-width-fraction (window-body-width win t))))
          (max-h (floor (* org-show-image-height-fraction (window-body-height win t)))))
@@ -440,6 +497,7 @@ Org or scimax inline image settings."
         (let ((file (expand-file-name (match-string-no-properties 1))))
           (when (and (string-match-p (image-file-name-regexp) file)
                      (file-exists-p file))
+            (org-show--fresh-image-file file)
             (let ((ov (make-overlay (match-beginning 0) (match-end 0) nil t nil)))
               (overlay-put ov 'display (create-image file nil nil
                                                      :max-width max-w
@@ -799,11 +857,15 @@ I is the column index, used to name the indirect buffer."
       (org-show--style-lists)
       (org-show--preview-latex)
       (org-show--show-images win)
+      (when (eq (nth 4 col) 'code)
+        (org-show-code-mode 1))
       (set-window-start win (point-min)))))
 
-(defun org-show--display-columns (cols)
+(defun org-show--display-columns (cols &optional direction)
   "Lay out the current slide with beamer columns COLS side by side.
-The current buffer must be the base buffer, narrowed to the slide."
+With DIRECTION below, the columns are stacked instead; this is used
+for code above its results.  The current buffer must be the base
+buffer, narrowed to the slide."
   (let* ((base (current-buffer))
          (title-win (selected-window))
          (total (apply #'+ (mapcar #'car cols)))
@@ -832,19 +894,20 @@ The current buffer must be the base buffer, narrowed to the slide."
       (fit-window-to-buffer title-win (floor (window-total-height (frame-root-window)) 3) 1)
       (with-selected-window title-win (org-show--show-images))
       ;; the columns
-      (let ((width (window-total-width win)))
+      (let* ((below (eq direction 'below))
+             (space (if below (window-total-height win) (window-total-width win))))
         (while cols
-          (let ((col (car cols)))
-            (when (cdr cols)
-              (split-window win (max window-min-width
-                                     (round (* width (/ (car col) total))))
-                            'right))
-            (let ((next (and (cdr cols) (window-right win))))
-              (org-show--setup-column-window win base col i)
-              (push win col-wins)
-              (setq win next
-                    cols (cdr cols)
-                    i (1+ i))))))
+          (let* ((col (car cols))
+                 (next (and (cdr cols)
+                            (split-window
+                             win
+                             (max (if below window-min-height window-min-width)
+                                  (round (* space (/ (car col) total))))
+                             (if below 'below 'right)))))
+            (setq col-wins (append (org-show--setup-column win base col i) col-wins)
+                  win next
+                  cols (cdr cols)
+                  i (1+ i)))))
       (org-show--fit-text col-wins org-show-column-text-scale))
     (select-window title-win)))
 
@@ -876,8 +939,19 @@ The current buffer must be the base buffer, narrowed to the slide."
                org-show-title-text-scale org-show-min-text-scale
                org-show-page-text-scale org-show-image-width-fraction
                org-show-image-height-fraction org-show-list-indent
-               org-show-latex-size org-show-latex-scale))
+               org-show-latex-size org-show-latex-scale
+               org-show-src-code-width))
   (put var 'safe-local-variable #'numberp))
+(put 'org-show-src-display 'safe-local-variable #'org-show--src-display-p)
+(put 'org-show-src-split 'safe-local-variable #'org-show--src-split-p)
+
+(defun org-show--src-split-p (value)
+  "Return non-nil if VALUE is a valid `org-show-src-split'."
+  (memq value '(left-right top-bottom)))
+
+(defun org-show--src-display-p (value)
+  "Return non-nil if VALUE is a valid `org-show-src-display'."
+  (memq value '(exports results both)))
 (put 'org-show-list-bullets 'safe-local-variable #'org-show--string-list-p)
 (put 'org-show-slide-tag 'safe-local-variable #'stringp)
 
@@ -901,6 +975,9 @@ The current buffer must be the base buffer, narrowed to the slide."
     ("macro-markers" org-show-hide-macro-markers booleanp)
     ("macros" org-show-expand-macros booleanp)
     ("align-tables" org-show-align-tables booleanp)
+    ("src" org-show-src-display org-show--src-display-p)
+    ("code-width" org-show-src-code-width numberp)
+    ("src-split" org-show-src-split org-show--src-split-p)
     ("bullets" org-show-list-bullets org-show--string-list-p)
     ("list-indent" org-show-list-indent natnump)
     ("hanging" org-show-hanging-indent booleanp)
@@ -1146,6 +1223,259 @@ buffer text is not changed."
                 ;; overlay value not in the invisibility spec wins
                 (overlay-put ov 'invisible 'org-show-macro)
                 (push ov org-show--hide-overlays)))))))))
+
+;;** Code and results
+
+(defun org-show--src-mode (info)
+  "Return how the source block with INFO is shown: code, results, both or none.
+INFO is from `org-babel-get-src-block-info'.  See `org-show-src-display'."
+  (let ((exports (or (cdr (assq :exports (nth 2 info))) "code"))
+        (setting (or org-show--slide-src org-show-src-display)))
+    (cond ((equal exports "none") 'none)
+          ((eq setting 'results) 'results)
+          ((eq setting 'both) 'both)
+          ((equal exports "results") 'results)
+          ((equal exports "both") 'both)
+          (t 'code))))
+
+(defun org-show--slide-src-split (&optional with-text)
+  "Return the code and results in the accessible region as two columns.
+The format is that of `org-show--slide-columns', with a fifth element,
+code, marking the code column.  Return nil unless the region has a
+source block to be shown with its results, see `org-show-src-display'.
+The first such block is split: the code, and its results with the
+rest of the region.  Text before the block is left out (it goes in
+the title strip), or with WITH-TEXT, shown above the code."
+  (catch 'found
+    (org-element-map (org-element-parse-buffer) 'src-block
+      (lambda (block)
+        (let* ((beg (org-element-property :begin block))
+               (info (save-excursion
+                       (goto-char (org-element-property :post-affiliated block))
+                       (ignore-errors (org-babel-get-src-block-info 'no-eval)))))
+          (when (and info
+                     (not (equal (car info) "emacs-lisp-slide"))
+                     (eq (org-show--src-mode info) 'both))
+            (let* ((end (save-excursion
+                          (goto-char (org-element-property :end block))
+                          (skip-chars-backward " \t\n" beg)
+                          (min (point-max) (1+ (point)))))
+                   (res (save-excursion
+                          (goto-char (org-element-property :post-affiliated block))
+                          (ignore-errors (org-babel-where-is-src-block-result))))
+                   (right (if (and res (<= end res (point-max)))
+                              (save-excursion (goto-char res) (line-beginning-position))
+                            end)))
+              (throw 'found
+                     (list (list org-show-src-code-width
+                                 beg (if with-text (point-min) beg) end 'code)
+                           (list (- 1.0 org-show-src-code-width)
+                                 right right (point-max)))))))))
+    nil))
+
+(defun org-show--src-split-direction (pos)
+  "Return the direction to split code and results at POS: right or below.
+POS is a heading, of a slide or a beamer column; its ORG_SHOW_SRC_SPLIT
+property, or that of a heading above it, overrides `org-show-src-split'."
+  (let* ((prop (org-entry-get pos "ORG_SHOW_SRC_SPLIT" t))
+         (value (if prop (intern (downcase (string-trim prop))) org-show-src-split)))
+    (if (eq (if (org-show--src-split-p value) value org-show-src-split) 'top-bottom)
+        'below
+      'right)))
+
+(defun org-show--src-setting (pos)
+  "Return the ORG_SHOW_SRC property at heading POS, or above it, as a symbol.
+Return nil if there is none or it is not valid, see `org-show-src-display'."
+  (let* ((v (org-with-wide-buffer (org-entry-get pos "ORG_SHOW_SRC" t)))
+         (sym (and v (intern (downcase (string-trim v))))))
+    (and (org-show--src-display-p sym) sym)))
+
+(defun org-show--setup-column (win base col i)
+  "Show column COL of buffer BASE in window WIN; return the windows used.
+If the column has code to be shown with its results, WIN is divided
+into a window for the code (with the column text before it) and one
+for the results, see `org-show-src-split'.  I is the column index.
+The column heading's ORG_SHOW_SRC property, if any, applies to it."
+  (let* ((org-show--slide-src (or (and (not (nth 4 col))
+                                       (with-current-buffer base
+                                         (org-show--src-setting (nth 1 col))))
+                                  org-show--slide-src))
+         (inner (and (not (nth 4 col))
+                    (with-current-buffer base
+                      (save-restriction
+                        (narrow-to-region (nth 2 col) (nth 3 col))
+                        (org-show--slide-src-split t))))))
+    (if (not inner)
+        (progn (org-show--setup-column-window win base col i)
+               (list win))
+      (let* ((dir (with-current-buffer base
+                    (save-restriction
+                      (widen)
+                      (org-show--src-split-direction (nth 1 col)))))
+             (size (if (eq dir 'below)
+                       (max window-min-height
+                            (round (* (window-total-height win) (car (car inner)))))
+                     (max window-min-width
+                          (round (* (window-total-width win) (car (car inner)))))))
+             (other (split-window win size dir)))
+        (org-show--setup-column-window win base (nth 0 inner) i)
+        (org-show--setup-column-window other base (nth 1 inner) i)
+        (list win other)))))
+
+(defvar org-show-code-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'org-show-execute-src-block)
+    map)
+  "Keymap for `org-show-code-mode'.")
+
+(define-minor-mode org-show-code-mode
+  "Minor mode for the code side of a slide with code and results.
+\\{org-show-code-mode-map}"
+  :lighter nil
+  :keymap org-show-code-mode-map)
+
+(defvar org-show--executing nil
+  "Non-nil while `org-show-execute-src-block' runs a block.")
+
+(defun org-show-execute-src-block ()
+  "Run the source block at point and show the slide with its new results.
+The block is run in the presentation buffer, as \\[org-ctrl-c-ctrl-c]
+would, so the results are written to the file as usual."
+  (interactive)
+  ;; the code window may also hold text before the block
+  (unless (org-element-lineage (org-element-at-point) '(src-block) t)
+    (let ((case-fold-search t))
+      (goto-char (point-min))
+      (re-search-forward "^[ \t]*#\\+begin_src\\b" nil t)
+      (forward-line 1)))
+  (let ((pos (point))
+        (base (org-show--base-buffer)))
+    (with-current-buffer base
+      (save-restriction
+        (widen)
+        (save-excursion
+          (goto-char pos)
+          (let ((org-show--executing t))
+            (org-babel-execute-src-block)))))
+    (org-show--refresh-slide pos)))
+
+(defun org-show--refresh-slide (&optional code-pos)
+  "Show the current slide again, e.g. with new results.
+With CODE-POS, select the code window and put point there."
+  (when (and *org-show-running* org-show-presentation-file)
+    (org-show-goto-slide org-show-current-slide-number)
+    (when code-pos
+      (let ((win (cl-find-if (lambda (w)
+                               (buffer-local-value 'org-show-code-mode (window-buffer w)))
+                             (window-list))))
+        (when win
+          (select-window win)
+          (goto-char (max (point-min) (min code-pos (point-max)))))))))
+
+(defun org-show--after-execute ()
+  "Show the slide again after a block of the presentation was run.
+For `org-babel-after-execute-hook' during the show."
+  (when (and *org-show-running* (not org-show--executing)
+             org-show-presentation-file
+             (equal (buffer-file-name (org-show--base-buffer))
+                    (expand-file-name org-show-presentation-file)))
+    (let ((pos (and org-show-code-mode (point))))
+      (run-at-time 0 nil #'org-show--refresh-slide pos))))
+
+(defun org-show--start-R ()
+  "Return the buffer of a running R process, started with ESS if needed."
+  (or (cl-find-if (lambda (b)
+                    (and (eq (buffer-local-value 'major-mode b) 'inferior-ess-r-mode)
+                         (get-buffer-process b)))
+                  (buffer-list))
+      (when (or (fboundp 'R) (require 'ess-r-mode nil t))
+        (with-no-warnings
+          (let ((ess-ask-for-ess-directory nil))
+            (let ((buf (R)))
+              (if (bufferp buf) buf (current-buffer))))))))
+
+(defun org-show--start-python ()
+  "Return the buffer of a running Python shell, started if needed."
+  (require 'python)
+  (with-no-warnings
+    (let ((proc (or (python-shell-get-process)
+                    (run-python nil nil nil))))
+      (cond ((processp proc) (process-buffer proc))
+            ((bufferp proc) proc)
+            (t (get-buffer "*Python*"))))))
+
+(defun org-show--src-repl (info)
+  "Return a REPL buffer for the source block with INFO, starting one if needed.
+See `org-show-src-repl-functions'."
+  (let ((session (cdr (assq :session (nth 2 info))))
+        (fn (cdr (assoc-string (car info) org-show-src-repl-functions t))))
+    (ignore-errors
+      (save-window-excursion
+        (let ((buf (if (and session (not (equal session "none")))
+                       (org-babel-initiate-session nil info)
+                     (and fn (funcall fn)))))
+          (and buf (get-buffer buf)))))))
+
+(defvar org-show--scaled-buffers '()
+  "Buffers whose text scale was changed for editing during the show.")
+
+(defvar org-src--beg-marker)
+
+(defun org-show--src-edit-setup ()
+  "Show a block opened for editing during the show next to its REPL.
+For `org-src-mode-hook'."
+  (when (and org-src-mode *org-show-running*
+             (boundp 'org-src--beg-marker)
+             (markerp org-src--beg-marker)
+             (buffer-live-p (marker-buffer org-src--beg-marker))
+             org-show-presentation-file
+             (with-current-buffer (marker-buffer org-src--beg-marker)
+               (equal (buffer-file-name (org-show--base-buffer))
+                      (expand-file-name org-show-presentation-file))))
+    (let* ((edit (current-buffer))
+           ;; local to the editing buffer, so read it here
+           (marker org-src--beg-marker)
+           (info (with-current-buffer (marker-buffer marker)
+                   (save-excursion
+                     (goto-char marker)
+                     (ignore-errors (org-babel-get-src-block-info 'no-eval))))))
+      (add-hook 'kill-buffer-hook #'org-show--src-edit-done nil t)
+      ;; lay out after Org has shown the editing buffer
+      (run-at-time 0 nil #'org-show--src-edit-layout edit info))))
+
+(defun org-show--src-edit-layout (edit info)
+  "Show the editing buffer EDIT on the left and the REPL for INFO on the right."
+  (when (buffer-live-p edit)
+    (let ((repl (and info (org-show--src-repl info)))
+          (scale (or org-show-column-text-scale 0)))
+      (with-current-buffer edit
+        (text-scale-set scale)
+        ;; ESS evaluates in `ess-local-process-name'
+        (when (and repl (boundp 'ess-local-process-name))
+          (let ((name (buffer-local-value 'ess-local-process-name repl)))
+            (when name (setq-local ess-local-process-name name)))))
+      (delete-other-windows)
+      (set-window-parameter (selected-window) 'mode-line-format nil)
+      (switch-to-buffer edit)
+      (when repl
+        (let ((win (split-window nil (max window-min-width
+                                          (round (* (window-total-width)
+                                                    org-show-src-code-width)))
+                                 'right)))
+          (set-window-buffer win repl)
+          (with-current-buffer repl
+            (unless (memq repl org-show--scaled-buffers)
+              (push repl org-show--scaled-buffers))
+            (text-scale-set scale))
+          (with-selected-window win (goto-char (point-max))))))))
+
+(defun org-show--src-edit-done ()
+  "Show the slide again when the editing buffer is closed.
+For the buffer-local `kill-buffer-hook' of the editing buffer."
+  (let ((pos (and (boundp 'org-src--beg-marker)
+                  (markerp org-src--beg-marker)
+                  (marker-position org-src--beg-marker))))
+    (run-at-time 0 nil #'org-show--refresh-slide pos)))
 
 ;;** Tables
 
@@ -1446,10 +1776,17 @@ On a title or section page, show that page again."
     ;; setup the text
     (switch-to-buffer (current-buffer))
     (with-no-warnings
-      (if (fboundp 'org-fold-show-subtree) (org-fold-show-subtree) (org-show-subtree))
-      (if (fboundp 'org-fold-hide-block-all) (org-fold-hide-block-all) (org-hide-block-all)))
+      (if (fboundp 'org-fold-show-subtree) (org-fold-show-subtree) (org-show-subtree)))
+    ;; blocks are not folded: code that is not wanted is hidden instead,
+    ;; see `org-show-src-display'
+    (setq org-show--slide-src (org-show--src-setting (point)))
+    (let ((src (and (not cols) (org-show--slide-src-split))))
+      (when src
+        (setq cols src
+              src (org-show--src-split-direction (point-min))))
+      (setq org-show--split-direction src))
     (if cols
-        (org-show--display-columns cols)
+        (org-show--display-columns cols org-show--split-direction)
       (delete-other-windows)
       (org-show--hide-clutter (point-min) (point-max))
       (org-show--hide-drawers)
@@ -1599,6 +1936,8 @@ first slide of each section if `org-show-section-pages' is non-nil."
   (delete-other-windows)
   (org-show--beautify)
   (unless org-show-mode (org-show-mode 1))
+  (add-hook 'org-babel-after-execute-hook #'org-show--after-execute)
+  (add-hook 'org-src-mode-hook #'org-show--src-edit-setup)
   (setq org-show-current-slide-number 1)
   (org-show-goto-slide 1))
 
@@ -1607,6 +1946,12 @@ first slide of each section if `org-show-section-pages' is non-nil."
   "Stop the org-show.
 Try to reset the state of your Emacs. It isn't perfect ;)"
   (interactive)
+  (remove-hook 'org-babel-after-execute-hook #'org-show--after-execute)
+  (remove-hook 'org-src-mode-hook #'org-show--src-edit-setup)
+  (dolist (buf org-show--scaled-buffers)
+    (when (buffer-live-p buf)
+      (with-current-buffer buf (text-scale-set 0))))
+  (setq org-show--scaled-buffers '())
   (org-show--teardown-columns)
   (when org-show-presentation-file (find-file org-show-presentation-file))
   ;; make slide tag visible again
