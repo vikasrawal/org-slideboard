@@ -8,20 +8,38 @@ stays live Org that can be edited, and code that can be run, during the
 show.
 
 * Installation
-From MELPA:
+org-slideboard is not yet on MELPA, so install it from this repository.
+
+With Emacs 30 or later, =use-package= can fetch it directly:
 
 #+begin_src emacs-lisp
 (use-package org-slideboard
-  :ensure t
+  :vc (:url "https://github.com/vikasrawal/org-slideboard")
   :commands org-slideboard-start-slideshow)
 #+end_src
 
-Or from a clone of this repository:
+With Emacs 29, install it once with =M-x package-vc-install RET
+https://github.com/vikasrawal/org-slideboard RET=, then use
+=(use-package org-slideboard :commands org-slideboard-start-slideshow)=.
+=M-x package-vc-upgrade= updates it.
+
+With straight.el:
+
+#+begin_src emacs-lisp
+(use-package org-slideboard
+  :straight (:host github :repo "vikasrawal/org-slideboard")
+  :commands org-slideboard-start-slideshow)
+#+end_src
+
+Or clone the repository and add it to the load path:
 
 #+begin_src emacs-lisp
 (add-to-list 'load-path "/path/to/org-slideboard")
 (require 'org-slideboard)
 #+end_src
+
+Once it is on MELPA, =(use-package org-slideboard :ensure t)= will be
+enough.
 
 It needs Emacs 28.1 and Org 9.6 or later.  org-modern, ESS and
 python-mode are used when installed, but are not required.
