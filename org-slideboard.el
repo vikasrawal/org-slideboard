@@ -979,6 +979,9 @@ buffer, narrowed to the slide."
     (org-slideboard--preview-latex)
     (org-slideboard--align-tables title-win)
     (org-slideboard--hide-mode-line title-win)
+    ;; the window may keep a start from an earlier display of the buffer,
+    ;; past the title strip, which would then look empty
+    (set-window-start title-win (point-min))
     (goto-char (point-min))
     ;; size the title strip first, so the column heights are final
     ;; before images are scaled and text is fitted
@@ -1006,7 +1009,11 @@ buffer, narrowed to the slide."
                   cols (cdr cols)
                   i (1+ i)))))
       (org-slideboard--fit-text col-wins org-slideboard-column-text-scale))
-    (select-window title-win)))
+    (select-window title-win)
+    ;; keep point on the heading: at the end of a hidden drawer below it,
+    ;; the strip would scroll to show point and the heading would be lost
+    (goto-char (point-min))
+    (set-window-start title-win (point-min))))
 
 (defun org-slideboard--teardown-columns ()
   "Remove column windows, indirect buffers and clutter overlays."
@@ -1904,7 +1911,10 @@ On a title or section page, show that page again."
       ;; preview equations in the current subtree
       (org-slideboard--preview-latex)
       (org-slideboard--show-images)
-      (org-slideboard--fit-text (list (selected-window)) org-slideboard-text-scale))
+      (org-slideboard--fit-text (list (selected-window)) org-slideboard-text-scale)
+      ;; start at the heading, not at a hidden drawer below it
+      (goto-char (point-min))
+      (set-window-start (selected-window) (point-min)))
 
     ;; evaluate special code blocks last as they may change the arrangement
     (save-excursion
