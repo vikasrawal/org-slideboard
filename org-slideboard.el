@@ -417,6 +417,47 @@ Pressing a key skips the rest of the animation."
   "Face for the heading on a section page."
   :group 'org-slideboard)
 
+(defcustom org-slideboard-footline '("%a" "%t" "%n / %N")
+  "What the information strip shows on every slide, or nil for no strip.
+A list of up to three parts, shown at the left, in the centre and at
+the right of the strip.  Each part is a string, in which these are
+replaced:
+
+  %t  title (#+TITLE)            %s  subtitle (#+SUBTITLE)
+  %a  author (#+AUTHOR)          %d  date (#+DATE)
+  %S  section heading above the slide
+  %h  heading of the slide
+  %n  number of the slide        %N  number of slides
+  %%  a %
+
+and other text is shown as it is, or a function of no arguments that
+returns the text; it is called in the presentation buffer, at the
+heading of the slide.  For example, (\"%a\" \"%S\" \"%n / %N\") or
+\=(\"Workshop, Rome\" \"\" \"%d\").  The strip is at the bottom of the
+slide or at the top, see `org-slideboard-footline-position', and uses
+the face `org-slideboard-footline'.  Title and section pages have no
+strip."
+  :type '(choice (const :tag "No strip" nil)
+                 (list (choice :tag "Left" string function)
+                       (choice :tag "Centre" string function)
+                       (choice :tag "Right" string function)))
+  :group 'org-slideboard)
+
+(defcustom org-slideboard-footline-position 'bottom
+  "Where the information strip goes: bottom or top of the slide.
+See `org-slideboard-footline'."
+  :type '(choice (const :tag "At the bottom" bottom)
+                 (const :tag "At the top" top))
+  :group 'org-slideboard)
+
+(defface org-slideboard-footline
+  '((t :inherit shadow :height 0.9))
+  "Face of the information strip, see `org-slideboard-footline'."
+  :group 'org-slideboard)
+
+(defconst org-slideboard--footline-buffer "*org-slideboard-footline*"
+  "Buffer for the information strip.")
+
 (defvar org-slideboard-current-slide-number 1
   "Holds current slide number.")
 
@@ -992,6 +1033,110 @@ as clutter, do not count."
         (forward-line 1))
       found)))
 
+(defun org-slideboard--footline-fields ()
+  "Return the values for `org-slideboard-footline', as (CHAR . STRING).
+The current buffer is the presentation buffer, at the slide heading."
+  (let* ((kw (org-with-wide-buffer
+              (org-collect-keywords '("TITLE" "SUBTITLE" "AUTHOR" "DATE"))))
+         (get (lambda (key sep)
+                (mapconcat #'identity
+                           (org-slideboard--keyword-lines
+                            (mapconcat #'identity (cdr (assoc key kw)) " "))
+                           sep)))
+         (section (org-with-wide-buffer
+                   (let ((up (car (last (org-slideboard--section-ancestors)))))
+                     (if up
+                         (save-excursion (goto-char up) (org-slideboard--heading-title))
+                       "")))))
+    (list (cons ?t (funcall get "TITLE" " "))
+          (cons ?s (funcall get "SUBTITLE" " "))
+          (cons ?a (funcall get "AUTHOR" ", "))
+          (cons ?d (funcall get "DATE" " "))
+          (cons ?S section)
+          (cons ?h (save-excursion (goto-char (point-min))
+                                   (org-slideboard--heading-title)))
+          (cons ?n (number-to-string org-slideboard-current-slide-number))
+          (cons ?N (number-to-string (length org-slideboard-slide-list))))))
+
+(defun org-slideboard--format-footline (part fields)
+  "Return the text of PART of the information strip, using FIELDS.
+PART is a string with %-escapes or a function, see
+`org-slideboard-footline'; FIELDS is from
+`org-slideboard--footline-fields'."
+  (cond
+   ((functionp part) (format "%s" (or (ignore-errors (funcall part)) "")))
+   ((stringp part)
+    (replace-regexp-in-string
+     "%\\(.\\)"
+     (lambda (m)
+       (let ((c (aref (match-string 1 m) 0)))
+         (cond ((eq c ?%) "%")
+               ((assq c fields) (cdr (assq c fields)))
+               (t m))))
+     part t t))
+   (t "")))
+
+(defun org-slideboard--show-footline (win)
+  "Split an information strip off window WIN, if there is one to show.
+Its place and content are set by `org-slideboard-footline-position'
+and `org-slideboard-footline'.  WIN keeps the rest of its space."
+  (when org-slideboard-footline
+    (let* ((fields (org-slideboard--footline-fields))
+           (parts (mapcar (lambda (p) (org-slideboard--format-footline p fields))
+                          org-slideboard-footline))
+           (top (eq org-slideboard-footline-position 'top))
+           ;; one line: Emacs would otherwise keep windows 4 lines high
+           (window-min-height 1)
+           (strip (split-window win (if top 2 -2) (if top 'above 'below)))
+           (buf (get-buffer-create org-slideboard--footline-buffer)))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (setq-local cursor-type nil
+                      truncate-lines t
+                      buffer-read-only t)
+          (org-slideboard-keys-mode 1)
+          (let ((left (propertize (or (nth 0 parts) "") 'face 'org-slideboard-footline))
+                (centre (propertize (or (nth 1 parts) "") 'face 'org-slideboard-footline))
+                (right (propertize (or (nth 2 parts) "") 'face 'org-slideboard-footline)))
+            (insert " " left)
+            (insert (propertize " " 'org-slideboard-spacer 'centre))
+            (insert centre)
+            (insert (propertize " " 'org-slideboard-spacer 'right))
+            (insert right " "))))
+      (set-window-buffer strip buf)
+      (set-window-dedicated-p strip t)
+      (set-window-parameter strip 'no-other-window t)
+      (org-slideboard--hide-mode-line strip)
+      (let ((window-min-height 1)
+            (window-resize-pixelwise t))
+        (fit-window-to-buffer strip nil 1))
+      (org-slideboard--align-footline strip)
+      strip)))
+
+(defun org-slideboard--align-footline (win)
+  "Centre the middle part of the information strip in WIN, right-align the last.
+The widths are measured as displayed, so this works with any font."
+  (with-current-buffer (window-buffer win)
+    (let* ((inhibit-read-only t)
+           (width (window-body-width win t))
+           (spacers '()))
+      (save-excursion
+        (goto-char (point-min))
+        (let (m)
+          (while (setq m (text-property-search-forward 'org-slideboard-spacer nil nil))
+            (push (cons (prop-match-value m) (prop-match-beginning m)) spacers))))
+      (let* ((c (cdr (assq 'centre spacers)))
+             (r (cdr (assq 'right spacers)))
+             (px (lambda (from to) (car (window-text-pixel-size win from to))))
+             (left-w (funcall px (point-min) c))
+             (centre-w (funcall px (1+ c) r))
+             (right-w (funcall px (1+ r) (point-max)))
+             (centre-x (max (+ left-w 8) (/ (- width centre-w) 2)))
+             (right-x (max (+ centre-x centre-w 8) (- width right-w))))
+        (put-text-property c (1+ c) 'display `(space :align-to (,centre-x)))
+        (put-text-property r (1+ r) 'display `(space :align-to (,right-x)))))))
+
 (defun org-slideboard--display-columns (cols &optional direction)
   "Lay out the current slide: its title, then its frames.
 The title strip at the top shows the heading only, at
@@ -1018,7 +1163,12 @@ must be the base buffer, narrowed to the slide."
          (first-col (apply #'min (mapcar #'cadr cols)))
          (intro (and (< meta-end first-col)
                      (org-slideboard--visible-text-p meta-end first-col)
-                     (list 1.0 meta-end meta-end first-col))))
+                     (list 1.0 meta-end meta-end first-col)))
+         ;; strips of one or two lines: Emacs would keep windows 4 high
+         (window-min-height 1)
+         (strip nil))
+    ;; the information strip first, so the slide gets the rest
+    (setq strip (org-slideboard--show-footline title-win))
     ;; the title strip
     (narrow-to-region (point-min) title-end)
     (let ((org-slideboard--scaling t))
@@ -1061,6 +1211,10 @@ must be the base buffer, narrowed to the slide."
                   cols (cdr cols)
                   i (1+ i)))))
       (org-slideboard--set-text-scale col-wins))
+    ;; the other windows took space from the strip; give it back
+    (when (window-live-p strip)
+      (fit-window-to-buffer strip nil 1)
+      (org-slideboard--align-footline strip))
     (select-window title-win)
     ;; keep point on the heading: at the end of a hidden drawer below it,
     ;; the strip would scroll to show point and the heading would be lost
@@ -1099,6 +1253,19 @@ must be the base buffer, narrowed to the slide."
   (put var 'safe-local-variable #'numberp))
 (put 'org-slideboard-src-display 'safe-local-variable #'org-slideboard--src-display-p)
 (put 'org-slideboard-src-split 'safe-local-variable #'org-slideboard--src-split-p)
+(put 'org-slideboard-footline 'safe-local-variable #'org-slideboard--footline-p)
+(put 'org-slideboard-footline-position 'safe-local-variable
+     #'org-slideboard--footline-position-p)
+
+(defun org-slideboard--footline-p (value)
+  "Return non-nil if VALUE is a strip made of strings only.
+Parts that are functions can only be set in the configuration."
+  (or (null value)
+      (and (listp value) (<= (length value) 3) (seq-every-p #'stringp value))))
+
+(defun org-slideboard--footline-position-p (value)
+  "Return non-nil if VALUE is a valid `org-slideboard-footline-position'."
+  (memq value '(bottom top)))
 
 (defun org-slideboard--src-split-p (value)
   "Return non-nil if VALUE is a valid `org-slideboard-src-split'."
@@ -1147,7 +1314,10 @@ must be the base buffer, narrowed to the slide."
     ("clutter" org-slideboard-hide-clutter booleanp)
     ("latex-size" org-slideboard-latex-size numberp)
     ("latex-scale" org-slideboard-latex-scale numberp)
-    ("center-math" org-slideboard-center-display-math booleanp))
+    ("center-math" org-slideboard-center-display-math booleanp)
+    ("footline" org-slideboard-footline org-slideboard--footline-p)
+    ("footline-position" org-slideboard-footline-position
+     org-slideboard--footline-position-p))
   "Keys of the #+SLIDEBOARD: keyword.
 Each entry is (KEY VARIABLE PREDICATE), or (KEY :mode MODE PREDICATE)
 for a key that adds MODE to or removes it from
@@ -2151,6 +2321,8 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   ;; ;; clean up miscellaneous buffers
   (when (get-buffer "*Animation*") (kill-buffer "*Animation*"))
   (when (get-buffer org-slideboard--page-buffer) (kill-buffer org-slideboard--page-buffer))
+  (when (get-buffer org-slideboard--footline-buffer)
+    (kill-buffer org-slideboard--footline-buffer))
 
   (when org-slideboard-presentation-file (find-file org-slideboard-presentation-file))
   (widen)

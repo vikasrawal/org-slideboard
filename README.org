@@ -58,6 +58,8 @@ org-slideboard offers:
 - *Text size under your control*: all frames of all slides share one text
   size, which ~C-=~ and =C--= change; =C-c }= and =C-c {= (or Emacs's zoom
   keys) change a single frame.  Titles keep their size.
+- *Information strip*: a line at the bottom (or top) of every slide with
+  author, title, slide number, or whatever you choose.
 - *Aligned tables*: tables are aligned to what is displayed, including
   expanded macros, equation images and proportional fonts.
 - *Reflowed paragraphs*: hard-wrapped source lines are joined on screen, as
@@ -264,6 +266,60 @@ go straight into the file.
 - Title and section pages use a separate buffer, =*org-slideboard-page*=, with the
   text centred.  If =org-slideboard-animate-pages= is on, the lines are animated
   in; any key press skips the animation.
+
+** Information strip
+Every slide has a one-line strip at the bottom, like beamer's footline, with
+the author on the left, the title in the middle and the slide number on the
+right.  Title and section pages have none.  What it shows is set by
+=org-slideboard-footline=, a list of up to three parts, shown left, centre
+and right:
+
+#+begin_src emacs-lisp
+(setq org-slideboard-footline '("%a" "%t" "%n / %N"))   ; the default
+#+end_src
+
+In each part these are replaced; any other text is shown as it is:
+
+| Escape | Replaced by                         |
+|--------+-------------------------------------|
+| =%t=   | title (=#+TITLE:=)                  |
+| =%s=   | subtitle (=#+SUBTITLE:=)            |
+| =%a=   | author (=#+AUTHOR:=)                |
+| =%d=   | date (=#+DATE:=)                    |
+| =%S=   | the section heading above the slide |
+| =%h=   | the heading of the slide            |
+| =%n=   | number of the slide                 |
+| =%N=   | number of slides                    |
+| =%%=   | a =%=                               |
+
+Some examples:
+
+#+begin_src emacs-lisp
+;; section on the left, date on the right, nothing in the middle
+(setq org-slideboard-footline '("%S" "" "%d"))
+;; any text
+(setq org-slideboard-footline '("Workshop on food balance sheets, Rome" "" "%n / %N"))
+;; a part can be a function, called at the slide heading
+(setq org-slideboard-footline
+      (list "%a" "%t" (lambda () (format-time-string "%H:%M"))))
+;; at the top instead
+(setq org-slideboard-footline-position 'top)
+;; no strip
+(setq org-slideboard-footline nil)
+#+end_src
+
+For one presentation:
+
+#+begin_example
+,#+SLIDEBOARD: footline:("%a" "%S" "%n / %N") footline-position:top
+,#+SLIDEBOARD: footline:nil
+#+end_example
+
+(In a file, the parts must be strings; functions can only be set in your
+configuration.)  The title, author and date are tidied as on the title
+page: LaTeX line breaks and commands are removed and macros expanded.  The
+strip uses the face =org-slideboard-footline= (grey, a little smaller than
+the text) and is not changed by the size keys.
 
 ** Images
 Image links (=[[file:plot.png]]=) are drawn by org-slideboard with their own
@@ -673,34 +729,36 @@ quotes, lists in parentheses).  The keyword is read each time a show starts,
 so changes take effect at the next start.  When the show stops, the previous
 values come back.  Beamer and other exporters ignore the keyword.
 
-| Key              | Setting                                               | Value                          |
-|------------------+-------------------------------------------------------+--------------------------------|
-| =modern=         | add or remove =org-modern-mode= in the beautify modes | =t= / =nil=                    |
-| =variable-pitch= | add or remove =variable-pitch-mode=                   | =t= / =nil=                    |
-| =modes=          | =org-slideboard-beautify-modes=                       | list of =...-mode= symbols     |
-| =disable=        | =org-slideboard-disable-modes=                        | list of =...-mode= symbols     |
-| =emphasis=       | =org-slideboard-hide-emphasis-markers=                | =t= / =nil=                    |
-| =macro-markers=  | =org-slideboard-hide-macro-markers=                   | =t= / =nil=                    |
-| =macros=         | =org-slideboard-expand-macros=                        | =t= / =nil=                    |
-| =align-tables=   | =org-slideboard-align-tables=                         | =t= / =nil=                    |
-| =src=            | =org-slideboard-src-display=                          | =exports= / =results= / =both= |
-| =code-width=     | =org-slideboard-src-code-width=                       | number                         |
-| =src-split=      | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=      |
-| =bullets=        | =org-slideboard-list-bullets=                         | list of strings, or =nil=      |
-| =list-indent=    | =org-slideboard-list-indent=                          | number                         |
-| =hanging=        | =org-slideboard-hanging-indent=                       | =t= / =nil=                    |
-| =title-page=     | =org-slideboard-title-page=                           | =t= / =nil=                    |
-| =section-pages=  | =org-slideboard-section-pages=                        | =t= / =nil=                    |
-| =animate=        | =org-slideboard-animate-pages=                        | =t= / =nil=                    |
-| =page-scale=     | =org-slideboard-page-text-scale=                      | number                         |
-| =text-scale=     | =org-slideboard-text-scale=                           | number                         |
-| =title-scale=    | =org-slideboard-title-text-scale=                     | number                         |
-| =image-width=    | =org-slideboard-image-width-fraction=                 | number                         |
-| =image-height=   | =org-slideboard-image-height-fraction=                | number                         |
-| =clutter=        | =org-slideboard-hide-clutter=                         | =t= / =nil=                    |
-| =latex-size=     | =org-slideboard-latex-size=                           | number                         |
-| =latex-scale=    | =org-slideboard-latex-scale=                          | number                         |
-| =center-math=    | =org-slideboard-center-display-math=                  | =t= / =nil=                    |
+| Key                 | Setting                                               | Value                                 |
+|---------------------+-------------------------------------------------------+---------------------------------------|
+| =modern=            | add or remove =org-modern-mode= in the beautify modes | =t= / =nil=                           |
+| =variable-pitch=    | add or remove =variable-pitch-mode=                   | =t= / =nil=                           |
+| =modes=             | =org-slideboard-beautify-modes=                       | list of =...-mode= symbols            |
+| =disable=           | =org-slideboard-disable-modes=                        | list of =...-mode= symbols            |
+| =emphasis=          | =org-slideboard-hide-emphasis-markers=                | =t= / =nil=                           |
+| =macro-markers=     | =org-slideboard-hide-macro-markers=                   | =t= / =nil=                           |
+| =macros=            | =org-slideboard-expand-macros=                        | =t= / =nil=                           |
+| =align-tables=      | =org-slideboard-align-tables=                         | =t= / =nil=                           |
+| =src=               | =org-slideboard-src-display=                          | =exports= / =results= / =both=        |
+| =code-width=        | =org-slideboard-src-code-width=                       | number                                |
+| =src-split=         | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=             |
+| =bullets=           | =org-slideboard-list-bullets=                         | list of strings, or =nil=             |
+| =list-indent=       | =org-slideboard-list-indent=                          | number                                |
+| =hanging=           | =org-slideboard-hanging-indent=                       | =t= / =nil=                           |
+| =title-page=        | =org-slideboard-title-page=                           | =t= / =nil=                           |
+| =section-pages=     | =org-slideboard-section-pages=                        | =t= / =nil=                           |
+| =animate=           | =org-slideboard-animate-pages=                        | =t= / =nil=                           |
+| =page-scale=        | =org-slideboard-page-text-scale=                      | number                                |
+| =text-scale=        | =org-slideboard-text-scale=                           | number                                |
+| =title-scale=       | =org-slideboard-title-text-scale=                     | number                                |
+| =image-width=       | =org-slideboard-image-width-fraction=                 | number                                |
+| =image-height=      | =org-slideboard-image-height-fraction=                | number                                |
+| =clutter=           | =org-slideboard-hide-clutter=                         | =t= / =nil=                           |
+| =latex-size=        | =org-slideboard-latex-size=                           | number                                |
+| =latex-scale=       | =org-slideboard-latex-scale=                          | number                                |
+| =center-math=       | =org-slideboard-center-display-math=                  | =t= / =nil=                           |
+| =footline=          | =org-slideboard-footline=                             | list of up to three strings, or =nil= |
+| =footline-position= | =org-slideboard-footline-position=                    | =bottom= / =top=                      |
 
 Unknown keys and invalid values are skipped with a message in the echo
 area, and the show starts anyway.  For safety, =modes= and =disable= only
@@ -762,6 +820,8 @@ that is in effect (the local one if there is one).
 | =org-slideboard-animate-pages=             | t                                              | animate the title and section pages                                |
 | =org-slideboard-page-text-scale=           | 5                                              | text scale of the title and section pages                          |
 | =org-slideboard-slide-tag=                 | "slide"                                        | tag that marks slides                                              |
+| =org-slideboard-footline=                  | ='("%a" "%t" "%n / %N")=                       | information strip on every slide, see [[*Information strip][Information strip]]            |
+| =org-slideboard-footline-position=         | =bottom=                                       | where the information strip goes: =bottom= or =top=                |
 
 The title and section pages use these faces, which can be customized with
 =M-x customize-face=:
@@ -774,6 +834,7 @@ The title and section pages use these faces, which can be customized with
 | =org-slideboard-page-section=  | heading on a section page                          |
 | =org-slideboard-bullet=        | list bullets during the presentation               |
 | =org-slideboard-divider=       | line between code and results, one above the other |
+| =org-slideboard-footline=      | the information strip                              |
 
 * Tips
 
