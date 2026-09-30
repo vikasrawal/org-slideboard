@@ -465,12 +465,15 @@ This is where the settings are read, since they may be local to it."
     (add-to-invisibility-spec 'org-slideboard)
     (let ((case-fold-search t))
       (save-excursion
-        ;; property drawers
+        ;; drawers: properties, logbook and any others
         (goto-char beg)
         (while (re-search-forward
-                "^[ \t]*:PROPERTIES:[ \t]*\n\\(?:.*\n\\)*?[ \t]*:END:[ \t]*\n?"
+                "^[ \t]*:\\([[:alnum:]_-]+\\):[ \t]*\n\\(?:.*\n\\)*?[ \t]*:END:[ \t]*\n?"
                 end t)
-          (org-slideboard--hide-region (match-beginning 0) (match-end 0)))
+          (if (string= (upcase (match-string 1)) "END")
+              ;; a stray :END: line, not the start of a drawer
+              (goto-char (1+ (match-beginning 0)))
+            (org-slideboard--hide-region (match-beginning 0) (match-end 0))))
         ;; keyword lines
         (goto-char beg)
         (while (re-search-forward
@@ -891,10 +894,13 @@ when the image is resized."
           (push center org-slideboard--hide-overlays))))))
 
 (defun org-slideboard--hide-drawers ()
-  "Fold drawers in the accessible part of the current buffer."
-  (if (fboundp 'org-fold-hide-drawer-all)
-      (org-fold-hide-drawer-all)
-    (org-cycle-hide-drawers 'all)))
+  "Fold drawers in the accessible part of the current buffer.
+With `org-slideboard-hide-clutter', the drawers are already hidden, and
+folding them too would show Org's ellipsis in their place."
+  (unless org-slideboard-hide-clutter
+    (if (fboundp 'org-fold-hide-drawer-all)
+        (org-fold-hide-drawer-all)
+      (org-cycle-hide-drawers 'all))))
 
 (defun org-slideboard--hide-mode-line (win)
   "Hide the mode line of WIN for the column layout."

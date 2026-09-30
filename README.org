@@ -512,7 +512,7 @@ bold, 1.3 times the text height).  For example:
 ** Hidden clutter
 When =org-slideboard-hide-clutter= is non-nil, the following are hidden:
 
-- property drawers
+- drawers: properties, logbook and any others (without Org's "..." in their place)
 - =#+NAME:=, =#+RESULTS:=, =#+CAPTION:= and =#+ATTR_*:= lines
 - source blocks shown only as results (see [[*Code and results][Code and results]]), and
   blocks with =:exports none=; results, such as plots, stay visible
