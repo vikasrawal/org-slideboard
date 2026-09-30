@@ -30,15 +30,15 @@ This presentation is itself an Org file for {{{pkg}}}: every slide uses the
 feature it describes.
 
 ** Starting, moving and stopping                                      :slide:
-| Key                                  | Does                             |
-|--------------------------------------+----------------------------------|
-| =M-x org-slideboard-start-slideshow= | start at the title page          |
-| =PgDn= / =PgUp=                      | next / previous slide            |
-| =C-c ;=                              | show the current slide again     |
-| =M-ESC g=                            | go to a slide by number          |
-| =M-ESC t=                            | table of contents                |
-| =M-ESC 0=                            | all text sizes back to the start |
-| =M-ESC q=                            | stop the show                    |
+| Key                                  | Does                                   |
+|--------------------------------------+----------------------------------------|
+| =M-x org-slideboard-start-slideshow= | start at the title page                |
+| =PgDn= / =PgUp=                      | next / previous slide                  |
+| =C-c ;=                              | show the current slide again           |
+| =M-ESC g=                            | go to a slide by number                |
+| =M-ESC t=                            | table of contents                      |
+| =M-ESC 0=                            | text and frame sizes back to the start |
+| =M-ESC q=                            | stop the show                          |
 
 These keys work in the windows of the slides only; everywhere else, your own
 keys keep working.
@@ -268,6 +268,8 @@ Press =C-c C-c= in the code window and watch the time change.
 :END:
 The property =SLIDEBOARD_SRC_SPLIT= arranges code and results: =bt= (the
 default), =tb=, =lr= or =rl=, naming where the code goes and then the results.
+Drag the line between them to give one more room; the slide remembers it,
+and =M-ESC 0= puts it back.
 
 #+begin_src emacs-lisp :exports both
 (let ((prices '(1.20 0.50 6.00))

@@ -190,7 +190,7 @@ strip, the frames, and the title and section pages.
 | =M-ESC g= | go to slide number                       |
 | =M-ESC t= | table of contents                        |
 | =M-ESC q= | stop the presentation                    |
-| =M-ESC 0= | all text sizes back to the start         |
+| =M-ESC 0= | text and frame sizes back to the start   |
 
 They are not active in other buffers, such as a REPL, another file or the
 buffer where a code block is edited, so your own keys keep working there
@@ -349,13 +349,13 @@ title strip) and the title and section pages keep theirs:
 All frames of all slides start at =org-slideboard-text-scale= (2, in steps
 of =text-scale-mode=).  There are two ways to change it during the show:
 
-| Keys                                         | Changes                                           |
-|----------------------------------------------+---------------------------------------------------|
-| ~C-=~ / =C--=                                | all frames of all slides                          |
-| =C-c }= / =C-c {=                            | the selected frame of this slide only             |
-| Emacs zoom: ~C-x C-=~, =C-x C--=, Ctrl+wheel | the selected frame of this slide only             |
-| =C-x C-0=                                    | the selected frame back to the common size        |
-| =M-ESC 0=                                    | everything back to the size the show started with |
+| Keys                                         | Changes                                                        |
+|----------------------------------------------+----------------------------------------------------------------|
+| ~C-=~ / =C--=                                | all frames of all slides                                       |
+| =C-c }= / =C-c {=                            | the selected frame of this slide only                          |
+| Emacs zoom: ~C-x C-=~, =C-x C--=, Ctrl+wheel | the selected frame of this slide only                          |
+| =C-x C-0=                                    | the selected frame back to the common size                     |
+| =M-ESC 0=                                    | everything back to how the show started (text and frame sizes) |
 
 A frame changed on its own keeps its size when you come back to the slide,
 and moves with ~C-=~ / =C--=: a frame one step larger stays one step larger
@@ -370,6 +370,23 @@ see [[*Changing the keys][Changing the keys]].
 To start every show at another size, set =org-slideboard-text-scale=, or
 =#+SLIDEBOARD: text-scale:3= for one presentation (=title-scale:= for
 titles).
+
+** Resizing frames
+Code and results start with =org-slideboard-src-code-width= (0.5) of the
+space for the code, and beamer columns with their =BEAMER_col= widths.  When
+that does not suit the content, change it during the show:
+
+- *Drag with the mouse* the line between two frames: the grey bar between
+  code and results one above the other, or the divider between frames side
+  by side (=org-slideboard-divider-width=, 6 pixels, only during the show).
+- *Or use Emacs's keys* in a frame: =C-x ^= makes it taller, =C-x }= and
+  =C-x {= wider and narrower.
+
+The slide is then shown again with the new sizes, so plots are scaled to
+their new window, and the slide keeps these sizes when you come back to it.
+This works for code and results, for code and results inside a column, and
+between beamer columns.  =M-ESC 0= puts all frames back to their usual
+sizes, as does stopping the show.
 
 ** Equations
 LaTeX math (=$...$=, =\(...\)=, =\[...\]=, =$$...$$= and environments
@@ -543,9 +560,10 @@ or section with the property =SLIDEBOARD_SRC_SPLIT=:
 (side by side) or of the height (top to bottom).  Plots in the results are
 scaled to their window.  The code window shows
 the whole block, including its =#+begin_src= and =#+end_src= lines.  When
-code and results are one above the other (=tb=, =bt=), a thin line in the
+code and results are one above the other (=tb=, =bt=), a grey bar in the
 face =org-slideboard-divider= separates them; its =:background= sets the
-colour and its =:height= the thickness.
+colour and its =:height= the thickness.  Drag it to change their heights,
+see [[*Resizing frames][Resizing frames]].
 
 *** Code in a beamer column
 When a beamer column holds a block to be shown with its results, that
@@ -800,6 +818,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-text-scale=                | 2                                              | text size of the frames of all slides                              |
 | =org-slideboard-title-text-scale=          | 2                                              | text size of slide titles                                          |
 | =org-slideboard-zoom-resizes-frame=        | t                                              | Emacs's zoom keys resize the selected frame for the show           |
+| =org-slideboard-divider-width=             | 6                                              | width in pixels of the draggable line between frames side by side  |
 | =org-slideboard-image-width-fraction=      | 0.8                                            | maximum image width, as a fraction of the window width             |
 | =org-slideboard-image-height-fraction=     | 0.8                                            | maximum image height, as a fraction of the window height           |
 | =org-slideboard-hide-clutter=              | t                                              | hide drawers, keywords, src blocks and raw LaTeX                   |
@@ -832,15 +851,15 @@ that is in effect (the local one if there is one).
 The title and section pages use these faces, which can be customized with
 =M-x customize-face=:
 
-| Face                           | Used for                                           |
-|--------------------------------+----------------------------------------------------|
-| =org-slideboard-page-title=    | title on the title page                            |
-| =org-slideboard-page-subtitle= | subtitle                                           |
-| =org-slideboard-page-info=     | author and date                                    |
-| =org-slideboard-page-section=  | heading on a section page                          |
-| =org-slideboard-bullet=        | list bullets during the presentation               |
-| =org-slideboard-divider=       | line between code and results, one above the other |
-| =org-slideboard-footline=      | the information strip                              |
+| Face                           | Used for                                                              |
+|--------------------------------+-----------------------------------------------------------------------|
+| =org-slideboard-page-title=    | title on the title page                                               |
+| =org-slideboard-page-subtitle= | subtitle                                                              |
+| =org-slideboard-page-info=     | author and date                                                       |
+| =org-slideboard-page-section=  | heading on a section page                                             |
+| =org-slideboard-bullet=        | list bullets during the presentation                                  |
+| =org-slideboard-divider=       | bar between code and results, one above the other (drag it to resize) |
+| =org-slideboard-footline=      | the information strip                                                 |
 
 * Tips
 

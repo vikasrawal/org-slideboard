@@ -165,6 +165,19 @@ Set in the indirect buffers that show the frames of a slide.")
 (defvar org-slideboard--start-text-scale nil
   "The value of `org-slideboard-text-scale' when the show started.")
 
+(defvar org-slideboard--frame-shares '()
+  "Frame sizes changed by dragging during the show, as ((TYPE . MARKER) . SHARE).
+TYPE is col for a beamer column (or the code or results of a slide),
+or src for the code or results inside a column.  MARKER is at the
+start of the frame's text in the presentation buffer, and SHARE its
+part of the width or height it shares with its neighbours.")
+
+(defvar org-slideboard--saved-divider-width nil
+  "The frame's `right-divider-width' before the show.")
+
+(defvar org-slideboard--resize-timer nil
+  "Timer that shows the slide again after its frames were resized.")
+
 (defvar org-slideboard--scaling nil
   "Non-nil while org-slideboard itself changes a text scale.")
 
@@ -202,11 +215,18 @@ Change :height to make the bullets bigger or smaller."
   :group 'org-slideboard)
 
 (defface org-slideboard-divider
-  '((((background dark)) :background "gray35" :height 0.1 :box nil)
-    (t :background "gray75" :height 0.1 :box nil))
+  '((((background dark)) :background "gray35" :height 0.4 :box nil)
+    (t :background "gray75" :height 0.4 :box nil))
   "Face of the line between code and results shown one above the other.
 The line is the mode line of the upper window in this face; its
 :height sets the thickness and its :background the colour."
+  :group 'org-slideboard)
+
+(defcustom org-slideboard-divider-width 6
+  "Width in pixels of the line between frames side by side during the show.
+It is Emacs's window divider, which can be dragged with the mouse to
+change the widths of the frames; see `org-slideboard--frame-shares'."
+  :type 'natnum
   :group 'org-slideboard)
 
 (defcustom org-slideboard-list-bullets '("●" "○" "■" "□")
@@ -1169,6 +1189,9 @@ must be the base buffer, narrowed to the slide."
          ;; strips of one or two lines: Emacs would keep windows 4 high
          (window-min-height 1)
          (strip nil))
+    ;; a window kept from the previous slide keeps its parameters
+    (dolist (w (window-list))
+      (set-window-parameter w 'org-slideboard-share nil))
     ;; the information strip first, so the slide gets the rest
     (setq strip (org-slideboard--show-footline title-win))
     ;; the title strip
@@ -1196,16 +1219,26 @@ must be the base buffer, narrowed to the slide."
           (setq win rest)))
       ;; the frames
       (let* ((below (eq direction 'below))
-             (space (if below (window-total-height win) (window-total-width win))))
+             (space (if below (window-total-height win) (window-total-width win)))
+             (shares (org-slideboard--shares 'col (mapcar #'caddr cols)
+                                             (mapcar (lambda (c) (/ (car c) total)) cols)))
+             (several (cdr cols)))
         (while cols
           (let* ((col (car cols))
+                 (share (pop shares))
                  (next (and (cdr cols)
                             (split-window
                              win
                              (max (if below window-min-height window-min-width)
-                                  (round (* space (/ (car col) total))))
-                             (if below 'below 'right)))))
-            (setq col-wins (append (org-slideboard--setup-column win base col i) col-wins))
+                                  (round (* space share)))
+                             (if below 'below 'right))))
+                 (wins (org-slideboard--setup-column win base col i)))
+            (setq col-wins (append wins col-wins))
+            ;; the column's window, or the pair of code and results it
+            ;; was divided into
+            (when several
+              (org-slideboard--mark-share (if (cdr wins) (window-parent win) win)
+                                          'col (nth 2 col) share))
             ;; code and results one above the other
             (when (and below next)
               (org-slideboard--divider win))
@@ -1620,6 +1653,107 @@ not valid, see `org-slideboard-src-display'."
          (sym (and v (intern (downcase (string-trim v))))))
     (and (org-slideboard--src-display-p sym) sym)))
 
+(defun org-slideboard--frame-share (type pos)
+  "Return the remembered share of the frame of TYPE whose text starts at POS."
+  (cdr (cl-find-if (lambda (e) (and (eq (caar e) type)
+                                    (eql (marker-position (cdar e)) pos)))
+                   org-slideboard--frame-shares)))
+
+(defun org-slideboard--set-frame-share (type pos share)
+  "Remember SHARE for the frame of TYPE whose text starts at POS."
+  (let ((entry (cl-find-if (lambda (e) (and (eq (caar e) type)
+                                            (eql (marker-position (cdar e)) pos)))
+                           org-slideboard--frame-shares)))
+    (if entry
+        (setcdr entry share)
+      (push (cons (cons type (set-marker (make-marker) pos
+                                         (or (buffer-base-buffer) (current-buffer))))
+                  share)
+            org-slideboard--frame-shares))))
+
+(defun org-slideboard--clear-frame-shares ()
+  "Forget the frame sizes changed by dragging."
+  (dolist (entry org-slideboard--frame-shares)
+    (set-marker (cdar entry) nil))
+  (setq org-slideboard--frame-shares '()))
+
+(defun org-slideboard--shares (type positions defaults)
+  "Return the shares of frames of TYPE at POSITIONS, with DEFAULTS.
+A frame whose size was changed by dragging gets its remembered share;
+the others share the rest in proportion to DEFAULTS.  The result sums
+to 1."
+  (let* ((known (mapcar (lambda (p) (org-slideboard--frame-share type p)) positions))
+         (known-sum (apply #'+ (delq nil (copy-sequence known))))
+         (unknown-sum (apply #'+ (cl-loop for k in known for d in defaults
+                                          unless k collect d)))
+         (rest (max 0.0 (- 1.0 known-sum)))
+         (shares (cl-loop for k in known for d in defaults
+                          collect (or k (if (> unknown-sum 0)
+                                            (* rest (/ d unknown-sum))
+                                          0.0))))
+         (sum (apply #'+ shares)))
+    (if (> sum 0)
+        (mapcar (lambda (x) (/ x sum)) shares)
+      defaults)))
+
+(defun org-slideboard--mark-share (win type pos share)
+  "Mark window WIN as the frame of TYPE at POS, laid out with SHARE.
+When its size is changed later, by dragging, the new share is kept;
+see `org-slideboard--size-changed'."
+  (set-window-parameter win 'org-slideboard-share (list type pos share)))
+
+(defun org-slideboard--size-changed (frame)
+  "Keep the sizes of frames changed by dragging, and show the slide again.
+For `window-size-change-functions' during the show; FRAME is the Emacs
+frame whose windows changed.  A frame's share is its part of the width
+or height of the frames it was laid out with, see
+`org-slideboard--mark-share'."
+  (when (and org-slideboard--running (eq frame (selected-frame)))
+    (let ((groups '())
+          (changed nil))
+      ;; the frames laid out together share a parent window
+      (walk-window-tree
+       (lambda (w)
+         (when (window-parameter w 'org-slideboard-share)
+           (let ((entry (assq (window-parent w) groups)))
+             (if entry
+                 (push w (cdr entry))
+               (push (list (window-parent w) w) groups)))))
+       frame t)
+      (dolist (group groups)
+        (let* ((wins (cdr group))
+               (horizontal (window-combined-p (car wins) t))
+               (size (lambda (w) (if horizontal (window-total-width w)
+                                   (window-total-height w))))
+               (total (float (apply #'+ (mapcar size wins)))))
+          (when (and (cdr wins) (> total 0))
+            (dolist (w wins)
+              (let ((mark (window-parameter w 'org-slideboard-share))
+                    (share (/ (funcall size w) total)))
+                (when (> (abs (- share (nth 2 mark))) 0.02)
+                  (with-current-buffer (org-slideboard--show-buffer)
+                    (org-slideboard--set-frame-share (nth 0 mark) (nth 1 mark) share))
+                  (set-window-parameter w 'org-slideboard-share
+                                        (list (nth 0 mark) (nth 1 mark) share))
+                  (setq changed t)))))))
+      (when changed
+        ;; images are scaled to their window: show the slide again when
+        ;; the dragging is over
+        (when (timerp org-slideboard--resize-timer)
+          (cancel-timer org-slideboard--resize-timer))
+        (setq org-slideboard--resize-timer
+              (run-with-idle-timer 0.3 nil #'org-slideboard--redraw-keeping-frame))))))
+
+(defun org-slideboard--redraw-keeping-frame ()
+  "Show the current slide again, with the same frame selected."
+  (setq org-slideboard--resize-timer nil)
+  (when org-slideboard--running
+    (let ((key (buffer-local-value 'org-slideboard--frame-key
+                                   (window-buffer (selected-window))))
+          (pos (window-point (selected-window))))
+      (org-slideboard-goto-slide org-slideboard-current-slide-number)
+      (org-slideboard--select-frame key pos))))
+
 (defun org-slideboard--setup-column (win base col i)
   "Show column COL of buffer BASE in window WIN; return the windows used.
 If the column has code to be shown with its results, WIN is divided
@@ -1644,14 +1778,21 @@ The column heading's SLIDEBOARD_SRC property, if any, applies to it."
                         (org-slideboard--src-split-direction (nth 1 col)))))
              (dir (car split))
              (inner (if (cdr split) inner (reverse inner)))
+             (shares (with-current-buffer base
+                       (org-slideboard--shares 'src (mapcar #'caddr inner)
+                                               (mapcar #'car inner))))
              (size (if (eq dir 'below)
                        (max window-min-height
-                            (round (* (window-total-height win) (car (car inner)))))
+                            (round (* (window-total-height win) (car shares))))
                      (max window-min-width
-                          (round (* (window-total-width win) (car (car inner)))))))
-             (other (split-window win size dir)))
+                          (round (* (window-total-width win) (car shares))))))
+             ;; a combination of its own, so the column keeps its size
+             (other (let ((window-combination-limit t))
+                      (split-window win size dir))))
         (org-slideboard--setup-column-window win base (nth 0 inner) i)
         (org-slideboard--setup-column-window other base (nth 1 inner) i)
+        (org-slideboard--mark-share win 'src (nth 2 (nth 0 inner)) (nth 0 shares))
+        (org-slideboard--mark-share other 'src (nth 2 (nth 1 inner)) (nth 1 shares))
         (when (eq dir 'below)
           (org-slideboard--divider win))
         (list win other)))))
@@ -2173,6 +2314,47 @@ On a title or section page, show that page again."
     (message "Once upon a time...")))
 
 
+(defun org-slideboard--setup-show ()
+  "Prepare the presentation buffer and Emacs for a show.
+Hide the tags of the slides and the slideboard-elisp blocks, and add
+the hooks and window dividers of the show.  The current buffer is the
+presentation buffer, widened."
+  (save-excursion
+    (goto-char (point-min))
+    ;; hide the tags of slide headings, with the blanks before them, so a
+    ;; heading does not wrap at large text sizes
+    (save-excursion
+      (while (re-search-forward (org-slideboard--slide-tag-regexp) nil t)
+        (when (org-at-heading-p)
+          (let ((eol (line-end-position)))
+            (beginning-of-line)
+            (when (re-search-forward "[ \t]+:[[:alnum:]_@#%:]+:[ \t]*$" eol t)
+              (org-slideboard--start-overlay (match-beginning 0) (match-end 0)))
+            (goto-char eol)))))
+    ;; hide slideboard-elisp blocks
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward org-babel-src-block-regexp nil t)
+        (save-excursion
+          (goto-char (match-beginning 0))
+          (let* ((src (org-element-context))
+                 (start (org-element-property :begin src))
+                 (end (org-element-property :end src))
+                 (info (save-excursion
+                         (org-babel-get-src-block-info))))
+            (when (string= "slideboard-elisp" (car info))
+              (org-slideboard--start-overlay start end))))))
+    (add-to-invisibility-spec 'org-slideboard-slide))
+  (add-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
+  (add-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
+  (add-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
+  (add-hook 'window-size-change-functions #'org-slideboard--size-changed)
+  ;; draggable lines between frames side by side
+  (unless org-slideboard--saved-divider-width
+    (setq org-slideboard--saved-divider-width
+          (or (frame-parameter nil 'right-divider-width) 0)))
+  (set-frame-parameter nil 'right-divider-width org-slideboard-divider-width))
+
 (defun org-slideboard-open-slide ()
   "Start show at this slide."
   (interactive)
@@ -2188,6 +2370,7 @@ On a title or section page, show that page again."
   (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
     (unless n (user-error "Not in a slide"))
     (setq org-slideboard--running t)
+    (org-slideboard--setup-show)
     (org-slideboard--beautify)
     (unless org-slideboard-mode (org-slideboard-mode 1))
     (setq org-slideboard-current-slide-number n)
@@ -2257,37 +2440,11 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (org-slideboard--apply-keyword-settings)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard-initialize)
-  ;; hide the tags of slide headings, with the blanks before them, so a
-  ;; heading does not wrap at large text sizes
-  (save-excursion
-    (while (re-search-forward (org-slideboard--slide-tag-regexp) nil t)
-      (when (org-at-heading-p)
-        (let ((eol (line-end-position)))
-          (beginning-of-line)
-          (when (re-search-forward "[ \t]+:[[:alnum:]_@#%:]+:[ \t]*$" eol t)
-            (org-slideboard--start-overlay (match-beginning 0) (match-end 0)))
-          (goto-char eol)))))
-  ;; hide slideboard-elisp blocks
-  (save-excursion
-    (goto-char (point-min))
-    (while (re-search-forward org-babel-src-block-regexp nil t)
-      (save-excursion
-        (goto-char (match-beginning 0))
-        (let* ((src (org-element-context))
-               (start (org-element-property :begin src))
-               (end (org-element-property :end src))
-               (info (save-excursion
-                       (org-babel-get-src-block-info))))
-          (when (string= "slideboard-elisp" (car info))
-            (org-slideboard--start-overlay start end))))))
-  (add-to-invisibility-spec 'org-slideboard-slide)
+  (org-slideboard--setup-show)
   (goto-char (point-min))
   (delete-other-windows)
   (org-slideboard--beautify)
   (unless org-slideboard-mode (org-slideboard-mode 1))
-  (add-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
-  (add-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
-  (add-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
   (setq org-slideboard-current-slide-number 1)
   (org-slideboard-goto-slide 1))
 
@@ -2298,6 +2455,13 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (remove-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
   (remove-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
   (remove-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
+  (remove-hook 'window-size-change-functions #'org-slideboard--size-changed)
+  (when (timerp org-slideboard--resize-timer)
+    (cancel-timer org-slideboard--resize-timer))
+  (org-slideboard--clear-frame-shares)
+  (when org-slideboard--saved-divider-width
+    (set-frame-parameter nil 'right-divider-width org-slideboard--saved-divider-width)
+    (setq org-slideboard--saved-divider-width nil))
   ;; the text size goes back to what it was when the show started
   (org-slideboard--clear-frame-sizes)
   (when (and org-slideboard--start-text-scale org-slideboard-presentation-file)
@@ -2452,11 +2616,13 @@ Do nothing if KEY is nil or no window shows that frame."
   (setq org-slideboard--frame-offsets '()))
 
 (defun org-slideboard-reset-text-size ()
-  "Put the text of all frames of all slides back to its starting size.
-That is the size when the show started, and every frame changed on its
-own goes back to it too.  Slide titles and pages keep their size."
+  "Put the text and the frames of all slides back as the show started.
+The text of all frames goes back to its starting size, including frames
+changed on their own, and frames resized by dragging get their usual
+size again.  Slide titles and pages keep their size."
   (interactive)
   (org-slideboard--clear-frame-sizes)
+  (org-slideboard--clear-frame-shares)
   (when org-slideboard--start-text-scale
     (with-current-buffer (org-slideboard--show-buffer)
       (setq org-slideboard-text-scale org-slideboard--start-text-scale)))
