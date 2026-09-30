@@ -124,36 +124,14 @@ on lines of their own.  Inline math is not moved."
   :type 'boolean
   :group 'org-slideboard)
 
-(defcustom org-slideboard-text-scale 4
-  "Largest text scale for slides without columns.
-Text is shrunk below this when needed to fit the window, see
-`org-slideboard-fit-text'.  \\[org-slideboard-increase-text-size] and
-\\[org-slideboard-decrease-text-size] change it for all later slides."
+(defcustom org-slideboard-text-scale 2
+  "Text scale of the slides, in steps of `text-scale-mode'.
+All slides get this size: their text, the title strip above beamer
+columns, the columns, and code and results.  Nothing is shrunk to fit;
+\\[org-slideboard-increase-text-size] and \\[org-slideboard-decrease-text-size] change the size for this
+and all later slides.  Title and section pages have their own size,
+`org-slideboard-page-text-scale'."
   :type 'integer
-  :group 'org-slideboard)
-
-(defcustom org-slideboard-title-text-scale 2
-  "Text scale for the slide title strip on slides with columns."
-  :type 'integer
-  :group 'org-slideboard)
-
-(defcustom org-slideboard-column-text-scale 2
-  "Largest text scale inside beamer column windows.
-Text is shrunk below this when needed to fit the columns, see
-`org-slideboard-fit-text'.  \\[org-slideboard-increase-text-size] and
-\\[org-slideboard-decrease-text-size] change it for all later slides."
-  :type 'integer
-  :group 'org-slideboard)
-
-(defcustom org-slideboard-min-text-scale -6
-  "Smallest text scale used when shrinking text to fit."
-  :type 'integer
-  :group 'org-slideboard)
-
-(defcustom org-slideboard-fit-text t
-  "If non-nil, shrink text on each slide until it fits its window.
-All columns of a slide get the same text scale."
-  :type 'boolean
   :group 'org-slideboard)
 
 (defcustom org-slideboard-image-width-fraction 0.8
@@ -706,27 +684,15 @@ with overlays, so the buffer text is not changed."
     (with-no-warnings
       (org-display-inline-images nil t (point-min) (point-max)))))
 
-(defun org-slideboard--fits-p (win)
-  "Return non-nil if the text of WIN fits in it without scrolling."
-  (with-current-buffer (window-buffer win)
-    (<= (cdr (window-text-pixel-size win (point-min) (point-max)))
-        (window-body-height win t))))
-
-(defun org-slideboard--fit-text (wins scale)
-  "Give the buffers of WINS the largest text scale <= SCALE at which they fit.
-All windows get the same scale.  Return the scale used."
-  (setq scale (or scale 0))
-  (cl-loop
-   do (dolist (w wins)
-        (with-current-buffer (window-buffer w)
-          (text-scale-set scale)
-          (org-slideboard--scale-latex w)
-          (org-slideboard--align-tables w)))
-   until (or (not org-slideboard-fit-text)
-             (<= scale org-slideboard-min-text-scale)
-             (cl-every #'org-slideboard--fits-p wins))
-   do (setq scale (1- scale)))
-  scale)
+(defun org-slideboard--set-text-scale (wins)
+  "Give the buffers of WINS the slide text size, `org-slideboard-text-scale'.
+Equations and tables are laid out again for that size."
+  (let ((scale (or org-slideboard-text-scale 0)))
+    (dolist (w wins)
+      (with-current-buffer (window-buffer w)
+        (text-scale-set scale)
+        (org-slideboard--scale-latex w)
+        (org-slideboard--align-tables w)))))
 
 (defun org-slideboard--math-p (el)
   "Return non-nil if Org element EL is an equation.
@@ -970,7 +936,7 @@ buffer, narrowed to the slide."
     ;; the title strip: heading plus anything before the first column
     (narrow-to-region (point-min) title-end)
     ;; `or': an older `defvar' of this variable may have left it nil
-    (text-scale-set (or org-slideboard-title-text-scale 2))
+    (text-scale-set (or org-slideboard-text-scale 0))
     (org-slideboard--hide-clutter (point-min) (point-max))
     (org-slideboard--hide-drawers)
     (org-slideboard--reflow)
@@ -1008,7 +974,7 @@ buffer, narrowed to the slide."
             (setq win next
                   cols (cdr cols)
                   i (1+ i)))))
-      (org-slideboard--fit-text col-wins org-slideboard-column-text-scale))
+      (org-slideboard--set-text-scale col-wins))
     (select-window title-win)
     ;; keep point on the heading: at the end of a hidden drawer below it,
     ;; the strip would scroll to show point and the heading would be lost
@@ -1032,15 +998,14 @@ buffer, narrowed to the slide."
 ;; File-local variables: the simple settings are safe, so Emacs does not
 ;; ask about them.  The mode lists are not marked safe, since a file
 ;; could use them to turn on any mode.
-(dolist (var '(org-slideboard-fit-text org-slideboard-hide-clutter org-slideboard-title-page
+(dolist (var '(org-slideboard-hide-clutter org-slideboard-title-page
                org-slideboard-section-pages org-slideboard-animate-pages
                org-slideboard-hanging-indent org-slideboard-hide-emphasis-markers
                org-slideboard-hide-macro-markers org-slideboard-expand-macros
                org-slideboard-align-tables
                org-slideboard-center-display-math))
   (put var 'safe-local-variable #'booleanp))
-(dolist (var '(org-slideboard-text-scale org-slideboard-column-text-scale
-               org-slideboard-title-text-scale org-slideboard-min-text-scale
+(dolist (var '(org-slideboard-text-scale
                org-slideboard-page-text-scale org-slideboard-image-width-fraction
                org-slideboard-image-height-fraction org-slideboard-list-indent
                org-slideboard-latex-size org-slideboard-latex-scale
@@ -1090,10 +1055,6 @@ buffer, narrowed to the slide."
     ("animate" org-slideboard-animate-pages booleanp)
     ("page-scale" org-slideboard-page-text-scale numberp)
     ("text-scale" org-slideboard-text-scale numberp)
-    ("column-scale" org-slideboard-column-text-scale numberp)
-    ("title-scale" org-slideboard-title-text-scale numberp)
-    ("min-scale" org-slideboard-min-text-scale numberp)
-    ("fit" org-slideboard-fit-text booleanp)
     ("image-width" org-slideboard-image-width-fraction numberp)
     ("image-height" org-slideboard-image-height-fraction numberp)
     ("clutter" org-slideboard-hide-clutter booleanp)
@@ -1561,7 +1522,7 @@ For `org-src-mode-hook'."
   "Show the editing buffer EDIT on the left and the REPL for INFO on the right."
   (when (buffer-live-p edit)
     (let ((repl (and info (org-slideboard--src-repl info)))
-          (scale (or org-slideboard-column-text-scale 0)))
+          (scale (or org-slideboard-text-scale 0)))
       (with-current-buffer edit
         (text-scale-set scale)
         ;; ESS evaluates in `ess-local-process-name'
@@ -1911,7 +1872,7 @@ On a title or section page, show that page again."
       ;; preview equations in the current subtree
       (org-slideboard--preview-latex)
       (org-slideboard--show-images)
-      (org-slideboard--fit-text (list (selected-window)) org-slideboard-text-scale)
+      (org-slideboard--set-text-scale (list (selected-window)))
       ;; start at the heading, not at a hidden drawer below it
       (goto-char (point-min))
       (set-window-start (selected-window) (point-min)))
@@ -2174,21 +2135,12 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
 
 
 (defun org-slideboard--change-text-scale (delta)
-  "Change the slide text scale by DELTA steps for this and later slides.
-On a title or section page this changes `org-slideboard-page-text-scale', on a
-slide with columns `org-slideboard-column-text-scale',
-otherwise `org-slideboard-text-scale'.  The change starts from the scale
-currently shown, which may be smaller than the maximum when text was
-shrunk to fit."
-  (let* ((col (cl-find-if #'buffer-live-p org-slideboard--column-buffers))
-         (page (equal (buffer-name) org-slideboard--page-buffer))
-         (var (cond (page 'org-slideboard-page-text-scale)
-                    (col 'org-slideboard-column-text-scale)
-                    (t 'org-slideboard-text-scale)))
-         (shown (with-current-buffer (if page (current-buffer)
-                                       (or col (org-slideboard--base-buffer)))
-                  (bound-and-true-p text-scale-mode-amount)))
-         (new (+ (or shown (buffer-local-value var (org-slideboard--show-buffer))) delta)))
+  "Change the text size by DELTA steps for this and all later slides.
+On a title or section page this changes `org-slideboard-page-text-scale',
+otherwise `org-slideboard-text-scale', which all slides use."
+  (let* ((page (equal (buffer-name) org-slideboard--page-buffer))
+         (var (if page 'org-slideboard-page-text-scale 'org-slideboard-text-scale))
+         (new (+ (or (buffer-local-value var (org-slideboard--show-buffer)) 0) delta)))
     ;; in the presentation buffer, so a value local to it (file-local
     ;; variable or #+SLIDEBOARD:) is changed there, and a global one globally
     (with-current-buffer (org-slideboard--show-buffer)
@@ -2200,9 +2152,8 @@ shrunk to fit."
 
 
 (defun org-slideboard-increase-text-size ()
-  "Increase the text size of this and later slides.
-Bound to \\[org-slideboard-increase-text-size].  With `org-slideboard-fit-text'
-non-nil, text never grows beyond what fits in the window."
+  "Increase the text size of this and all later slides.
+Bound to \\[org-slideboard-increase-text-size]."
   (interactive)
   (org-slideboard--change-text-scale 1))
 

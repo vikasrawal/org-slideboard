@@ -61,8 +61,8 @@ org-slideboard offers:
   children are shown as a title strip above one window per column.
 - *Images fitted to the column*: plots are drawn by org-slideboard itself and
   scaled to the width and height of their window.
-- *Text fitted to the slide*: text shrinks until each column fits, and
-  size changes carry over to later slides.
+- *One text size*: all slides use the same text size, which ~C-=~ and
+  =C--= change for the rest of the show.
 - *Aligned tables*: tables are aligned to what is displayed, including
   expanded macros, equation images and proportional fonts.
 - *Reflowed paragraphs*: hard-wrapped source lines are joined on screen, as
@@ -70,7 +70,7 @@ org-slideboard offers:
 - *Clutter hidden*: property drawers, =#+NAME:=, =#+RESULTS:=, =#+ATTR_*:=
   lines, non-exported source blocks and raw LaTeX lines are not shown.
 - *Equations sized to the text*: LaTeX math is previewed at the size of
-  the text and follows it as the text is fitted, and beamer-only
+  the text and follows it when the size changes, and beamer-only
   =#+LATEX_HEADER:= lines no longer leak into the equation images.
 - *Macros expanded*: ={{{macro(...)}}}= is shown as its expansion, and a
   macro can be given its own definition for the show.
@@ -231,16 +231,19 @@ the new version rather than the one Emacs cached.  When the presentation stops,
 the normal Org inline images are shown again.
 
 ** Text size
-Each slide starts at its maximum text scale and shrinks one step at a time
-until everything fits in its window.  All columns of a slide get the same
-scale.
+All slides have the same text size, =org-slideboard-text-scale= (2, in steps
+of =text-scale-mode=): the text of a slide, the title strip above beamer
+columns, the columns, and code and results.  Text is not shrunk to fit, so
+the size does not jump from slide to slide.
 
-- The maximum scale is =org-slideboard-column-text-scale= for columns and
-  =org-slideboard-text-scale= for slides without columns.
-- ~C-=~ and =C--= change that maximum by one step from the size currently on
-  screen, so the new size applies to all later slides.
-- Text never grows beyond what fits.  To allow text that overflows the
-  window, set =org-slideboard-fit-text= to nil.
+- ~C-=~ and =C--= make the text one step larger or smaller, on this slide
+  and all the others, for the rest of the show.  If a slide has more than
+  fits, make the text smaller while it is shown.
+- Title and section pages have their own size,
+  =org-slideboard-page-text-scale= (5); ~C-=~ and =C--= on a page change
+  that.
+- To start every show at another size, set =org-slideboard-text-scale=, or
+  =#+SLIDEBOARD: text-scale:3= for one presentation.
 
 ** Equations
 LaTeX math (=$...$=, =\(...\)=, =\[...\]=, =$$...$$= and environments
@@ -252,10 +255,8 @@ C-l=, and laid out for the slides:
   text font by measuring a preview image, so this works with any font,
   with =variable-pitch-mode=, and whatever =:scale= is set in
   =org-format-latex-options=.  Use 1.0 for math as large as the text.
-- *Follows the text*: equations grow and shrink with the text of the
-  slide, when the text is shrunk to fit and with ~C-=~ / =C--=.  Since they
-  are sized before the text is fitted, a slide with large equations gets a
-  smaller text size instead of running off the window.
+- *Follows the text*: equations grow and shrink with the text when its size
+  is changed with ~C-=~ / =C--=.
 - *Sharp*: the images are rendered at =org-slideboard-latex-scale= (4.0) and
   displayed smaller.  With =dvisvgm= (SVG) they are sharp at any size; with
   =dvipng= a higher render scale gives sharper but slower images.
@@ -414,7 +415,7 @@ or section with the property =SLIDEBOARD_SRC_SPLIT=:
 
 =org-slideboard-src-code-width= (0.5) is the code's share of the width
 (side by side) or of the height (top to bottom).  Plots in the results are
-scaled to their window, and text is fitted as usual.  The code window shows
+scaled to their window.  The code window shows
 the whole block, including its =#+begin_src= and =#+end_src= lines.  When
 code and results are one above the other (=tb=, =bt=), a thin line in the
 face =org-slideboard-divider= separates them; its =:background= sets the
@@ -599,7 +600,7 @@ Put one or more lines like this near the top of the file:
 
 #+begin_example
 ,#+SLIDEBOARD: modern:nil variable-pitch:t bullets:("➤" "–") image-width:0.7
-,#+SLIDEBOARD: animate:nil column-scale:1
+,#+SLIDEBOARD: animate:nil text-scale:3
 #+end_example
 
 The syntax is that of =#+OPTIONS=: =key:value= pairs separated by spaces,
@@ -629,10 +630,6 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =animate=        | =org-slideboard-animate-pages=                        | =t= / =nil=                    |
 | =page-scale=     | =org-slideboard-page-text-scale=                      | number                         |
 | =text-scale=     | =org-slideboard-text-scale=                           | number                         |
-| =column-scale=   | =org-slideboard-column-text-scale=                    | number                         |
-| =title-scale=    | =org-slideboard-title-text-scale=                     | number                         |
-| =min-scale=      | =org-slideboard-min-text-scale=                       | number                         |
-| =fit=            | =org-slideboard-fit-text=                             | =t= / =nil=                    |
 | =image-width=    | =org-slideboard-image-width-fraction=                 | number                         |
 | =image-height=   | =org-slideboard-image-height-fraction=                | number                         |
 | =clutter=        | =org-slideboard-hide-clutter=                         | =t= / =nil=                    |
@@ -649,7 +646,7 @@ The usual Emacs mechanism also works, with a block at the end of the file:
 
 #+begin_example
 # Local Variables:
-# org-slideboard-column-text-scale: 1
+# org-slideboard-text-scale: 3
 # org-slideboard-list-bullets: ("➤" "–")
 # org-slideboard-section-pages: nil
 # End:
@@ -671,11 +668,7 @@ that is in effect (the local one if there is one).
 
 | Variable                                   | Default                                        | Meaning                                                            |
 |--------------------------------------------+------------------------------------------------+--------------------------------------------------------------------|
-| =org-slideboard-text-scale=                | 4                                              | maximum text scale on slides without columns                       |
-| =org-slideboard-column-text-scale=         | 2                                              | maximum text scale in columns                                      |
-| =org-slideboard-title-text-scale=          | 2                                              | text scale of the title strip                                      |
-| =org-slideboard-min-text-scale=            | -6                                             | smallest scale used when fitting text                              |
-| =org-slideboard-fit-text=                  | t                                              | shrink text to fit the window                                      |
+| =org-slideboard-text-scale=                | 2                                              | text size of all slides                                            |
 | =org-slideboard-image-width-fraction=      | 0.8                                            | maximum image width, as a fraction of the window width             |
 | =org-slideboard-image-height-fraction=     | 0.8                                            | maximum image height, as a fraction of the window height           |
 | =org-slideboard-hide-clutter=              | t                                              | hide drawers, keywords, src blocks and raw LaTeX                   |
@@ -730,7 +723,7 @@ The title and section pages use these faces, which can be customized with
 * Credits
 org-slideboard is based on org-show by John Kitchin, part of [[https://github.com/jkitchin/scimax][scimax]],
 which in turn was based on [[https://sachachua.com/blog/2013/04/how-to-present-using-org-mode-in-emacs/][Sacha Chua's presentation code]].  Beamer
-columns, the title and section pages, text fitting, equation, macro and
+columns, the title and section pages, equation, macro and
 table layout, and the code-and-results views were added by Vikas Rawal.
 
 * License
