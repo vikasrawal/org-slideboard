@@ -52,7 +52,6 @@ users, so packages do not bind them):
   (define-key org-slideboard-mode-map [f5] #'org-slideboard-start-slideshow)
   (define-key org-slideboard-mode-map [f6] #'org-slideboard-execute-slide))
 #+end_src
->>>>>>> 923c36c (Rename to org-slideboard and prepare for MELPA):README.org
 
 * Overview
 
@@ -384,26 +383,31 @@ The drawer is hidden on the slide, and beamer export ignores both.  Blocks
 with =:exports none= are always hidden.  Code that is shown is no longer
 folded to its =#+begin_src= line.
 
-*** Side by side or top to bottom
+*** Arranging code and results
 With =both=, the first such block of a slide is shown like beamer columns:
 text before the block at the top, then the code and the results, with any
 text after them, in two windows.  They are arranged by
 =org-slideboard-src-split=:
 
-| Value        | Layout                                               |
-|--------------+------------------------------------------------------|
-| =left-right= | code on the left, results on the right (the default) |
-| =top-bottom= | code above, results below                            |
+| Value | Code   | Results |
+|-------+--------+---------|
+| =lr=  | left   | right   |
+| =rl=  | right  | left    |
+| =tb=  | top    | bottom  |
+| =bt=  | bottom | top     |
+
+The value names where the code goes and then where the results go, like
+=rankdir= in Graphviz (=LR=, =TB=).  =lr= is the default.
 
 It can be set for the whole presentation, for one file, and for one slide
 or section with the property =SLIDEBOARD_SRC_SPLIT=:
 
 #+begin_example
-,#+SLIDEBOARD: src-split:top-bottom
+,#+SLIDEBOARD: src-split:tb
 
 ,** A long plot                                                        :slide:
 :PROPERTIES:
-:SLIDEBOARD_SRC_SPLIT: top-bottom
+:SLIDEBOARD_SRC_SPLIT: tb
 :END:
 #+end_example
 
@@ -425,7 +429,7 @@ the code:
 :PROPERTIES:
 :BEAMER_col: 0.6
 :SLIDEBOARD_SRC: both
-:SLIDEBOARD_SRC_SPLIT: top-bottom
+:SLIDEBOARD_SRC_SPLIT: tb
 :END:
 #+end_example
 
@@ -612,7 +616,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =align-tables=   | =org-slideboard-align-tables=                         | =t= / =nil=                    |
 | =src=            | =org-slideboard-src-display=                          | =exports= / =results= / =both= |
 | =code-width=     | =org-slideboard-src-code-width=                       | number                         |
-| =src-split=      | =org-slideboard-src-split=                            | =left-right= / =top-bottom=    |
+| =src-split=      | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=      |
 | =bullets=        | =org-slideboard-list-bullets=                         | list of strings, or =nil=      |
 | =list-indent=    | =org-slideboard-list-indent=                          | number                         |
 | =hanging=        | =org-slideboard-hanging-indent=                       | =t= / =nil=                    |
@@ -687,7 +691,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-align-tables=              | t                                              | align tables to what is displayed                                  |
 | =org-slideboard-src-display=               | =exports=                                      | show code, results or both, see [[*Code and results][Code and results]]                   |
 | =org-slideboard-src-code-width=            | 0.5                                            | share of the width (or height) for the code, with code and results |
-| =org-slideboard-src-split=                 | =left-right=                                   | code left and results right, or =top-bottom=                       |
+| =org-slideboard-src-split=                 | =lr=                                           | where code and results go: =lr=, =rl=, =tb= or =bt=                |
 | =org-slideboard-src-repl-functions=        | R and python                                   | REPLs for editing blocks during the show                           |
 | =org-slideboard-title-page=                | t                                              | show a title page                                                  |
 | =org-slideboard-section-pages=             | t                                              | show section pages                                                 |

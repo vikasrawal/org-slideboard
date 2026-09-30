@@ -266,15 +266,23 @@ height when the code is above the results, see `org-slideboard-src-split'."
   :type 'number
   :group 'org-slideboard)
 
-(defcustom org-slideboard-src-split 'left-right
-  "How code and results are arranged when both are shown.
-`left-right' puts the code on the left and the results on the
-right; `top-bottom' puts the code above the results.  It can be set
-for one file with #+SLIDEBOARD: src-split:top-bottom, and for one slide
-or beamer column (or a section) with the property SLIDEBOARD_SRC_SPLIT.
-See `org-slideboard-src-display'."
-  :type '(choice (const :tag "Code left, results right" left-right)
-                 (const :tag "Code above, results below" top-bottom))
+(defcustom org-slideboard-src-split 'lr
+  "Where the code and the results go when both are shown.
+The value names where the code goes, then the results:
+
+  lr  code on the left, results on the right
+  rl  code on the right, results on the left
+  tb  code at the top, results at the bottom
+  bt  code at the bottom, results at the top
+
+as with rankdir in Graphviz.  It can be set for one file with
+#+SLIDEBOARD: src-split:tb, and for one slide or beamer column (or a
+section) with the property SLIDEBOARD_SRC_SPLIT.  See
+`org-slideboard-src-display'."
+  :type '(choice (const :tag "Code left, results right" lr)
+                 (const :tag "Code right, results left" rl)
+                 (const :tag "Code at the top, results at the bottom" tb)
+                 (const :tag "Code at the bottom, results at the top" bt))
   :group 'org-slideboard)
 
 (defcustom org-slideboard-src-repl-functions
@@ -930,7 +938,9 @@ buffer, narrowed to the slide."
          (title-win (selected-window))
          (total (apply #'+ (mapcar #'car cols)))
          (title-end (save-excursion
-                      (goto-char (nth 1 (car cols)))
+                      ;; the columns may not be in buffer order, e.g.
+                      ;; results left of the code
+                      (goto-char (apply #'min (mapcar #'cadr cols)))
                       (skip-chars-backward " \t\n")
                       (max (line-end-position) (point-min)))))
     ;; the title strip: heading plus anything before the first column
@@ -1007,7 +1017,7 @@ buffer, narrowed to the slide."
 
 (defun org-slideboard--src-split-p (value)
   "Return non-nil if VALUE is a valid `org-slideboard-src-split'."
-  (memq value '(left-right top-bottom)))
+  (memq value '(lr rl tb bt)))
 
 (defun org-slideboard--src-display-p (value)
   "Return non-nil if VALUE is a valid `org-slideboard-src-display'."
@@ -1334,14 +1344,19 @@ the title strip), or with WITH-TEXT, shown above the code."
     nil))
 
 (defun org-slideboard--src-split-direction (pos)
-  "Return the direction to split code and results at POS: right or below.
-POS is a heading, of a slide or a beamer column; its SLIDEBOARD_SRC_SPLIT
-property, or that of a heading above it, overrides `org-slideboard-src-split'."
+  "Return how to split code and results at POS, as (DIRECTION . CODE-FIRST).
+DIRECTION is right or below, and CODE-FIRST is non-nil when the code
+goes on the left or at the top.  POS is a heading, of a slide or a
+beamer column; its SLIDEBOARD_SRC_SPLIT property, or that of a heading
+above it, overrides `org-slideboard-src-split'."
   (let* ((prop (org-entry-get pos "SLIDEBOARD_SRC_SPLIT" t))
-         (value (if prop (intern (downcase (string-trim prop))) org-slideboard-src-split)))
-    (if (eq (if (org-slideboard--src-split-p value) value org-slideboard-src-split) 'top-bottom)
-        'below
-      'right)))
+         (value (if prop (intern (downcase (string-trim prop))) org-slideboard-src-split))
+         (value (if (org-slideboard--src-split-p value) value org-slideboard-src-split)))
+    (pcase value
+      ('rl '(right))
+      ('tb '(below . t))
+      ('bt '(below))
+      (_ '(right . t)))))
 
 (defun org-slideboard--src-setting (pos)
   "Return the SLIDEBOARD_SRC property at heading POS, or above it.
@@ -1369,10 +1384,12 @@ The column heading's SLIDEBOARD_SRC property, if any, applies to it."
     (if (not inner)
         (progn (org-slideboard--setup-column-window win base col i)
                (list win))
-      (let* ((dir (with-current-buffer base
-                    (save-restriction
-                      (widen)
-                      (org-slideboard--src-split-direction (nth 1 col)))))
+      (let* ((split (with-current-buffer base
+                      (save-restriction
+                        (widen)
+                        (org-slideboard--src-split-direction (nth 1 col)))))
+             (dir (car split))
+             (inner (if (cdr split) inner (reverse inner)))
              (size (if (eq dir 'below)
                        (max window-min-height
                             (round (* (window-total-height win) (car (car inner)))))
@@ -1843,8 +1860,9 @@ On a title or section page, show that page again."
     (setq org-slideboard--slide-src (org-slideboard--src-setting (point)))
     (let ((src (and (not cols) (org-slideboard--slide-src-split))))
       (when src
-        (setq cols src
-              src (org-slideboard--src-split-direction (point-min))))
+        (let ((split (org-slideboard--src-split-direction (point-min))))
+          (setq cols (if (cdr split) src (reverse src))
+                src (car split))))
       (setq org-slideboard--split-direction src))
     (if cols
         (org-slideboard--display-columns cols org-slideboard--split-direction)
