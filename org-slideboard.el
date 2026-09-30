@@ -162,6 +162,9 @@ so a frame keeps its size when its slide is shown again.")
   "Start of this frame's text in the presentation buffer, or nil.
 Set in the indirect buffers that show the frames of a slide.")
 
+(defvar org-slideboard--start-text-scale nil
+  "The value of `org-slideboard-text-scale' when the show started.")
+
 (defvar org-slideboard--scaling nil
   "Non-nil while org-slideboard itself changes a text scale.")
 
@@ -2007,6 +2010,7 @@ On a title or section page, show that page again."
   (setq org-slideboard-presentation-file (org-slideboard--file))
   (widen)
   (org-slideboard--apply-keyword-settings)
+  (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard-initialize)
   (org-slideboard--goto-slide-heading)
   (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
@@ -2079,6 +2083,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (goto-char (point-min))
 
   (org-slideboard--apply-keyword-settings)
+  (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard-initialize)
   ;; hide the tags of slide headings, with the blanks before them, so a
   ;; heading does not wrap at large text sizes
@@ -2121,9 +2126,12 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (remove-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
   (remove-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
   (remove-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
-  (dolist (entry org-slideboard--frame-offsets)
-    (set-marker (car entry) nil))
-  (setq org-slideboard--frame-offsets '())
+  ;; the text size goes back to what it was when the show started
+  (org-slideboard--clear-frame-sizes)
+  (when (and org-slideboard--start-text-scale org-slideboard-presentation-file)
+    (with-current-buffer (org-slideboard--show-buffer)
+      (setq org-slideboard-text-scale org-slideboard--start-text-scale)))
+  (setq org-slideboard--start-text-scale nil)
   (dolist (buf org-slideboard--scaled-buffers)
     (when (buffer-live-p buf)
       (with-current-buffer buf (text-scale-set 0))))
@@ -2263,6 +2271,29 @@ Do nothing if KEY is nil or no window shows that frame."
       (org-slideboard--set-text-scale (get-buffer-window-list nil nil t))
       (message "Text size of this frame: %+d" steps))))
 
+(defun org-slideboard--clear-frame-sizes ()
+  "Forget the size changes of single frames."
+  (dolist (entry org-slideboard--frame-offsets)
+    (set-marker (car entry) nil))
+  (setq org-slideboard--frame-offsets '()))
+
+(defun org-slideboard-reset-text-size ()
+  "Put the text of all frames of all slides back to its starting size.
+That is the size when the show started, and every frame changed on its
+own goes back to it too.  Slide titles and pages keep their size."
+  (interactive)
+  (org-slideboard--clear-frame-sizes)
+  (when org-slideboard--start-text-scale
+    (with-current-buffer (org-slideboard--show-buffer)
+      (setq org-slideboard-text-scale org-slideboard--start-text-scale)))
+  (when org-slideboard--running
+    (let ((key org-slideboard--frame-key)
+          (pos (point)))
+      (org-slideboard-goto-slide org-slideboard-current-slide-number)
+      (org-slideboard--select-frame key pos)))
+  (message "Text size of all slides back to %s"
+           (buffer-local-value 'org-slideboard-text-scale (org-slideboard--show-buffer))))
+
 (defun org-slideboard-increase-frame-text-size ()
   "Increase the text size of the selected frame of this slide.
 The frame keeps the size when the slide is shown again.  Emacs's own
@@ -2346,6 +2377,7 @@ See `org-slideboard-increase-text-size'."
     (define-key map (kbd "\e\eg") 'org-slideboard-goto-slide)
     (define-key map (kbd "\e\et") 'org-slideboard-toc)
     (define-key map (kbd "\e\eq") 'org-slideboard-stop-slideshow)
+    (define-key map (kbd "\e\e0") 'org-slideboard-reset-text-size)
     map)
   "Keys of the show, active only in slide windows.
 They work in the title strip, the frames and the title and section

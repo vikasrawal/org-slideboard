@@ -184,6 +184,7 @@ strip, the frames, and the title and section pages.
 | =M-ESC g= | go to slide number                       |
 | =M-ESC t= | table of contents                        |
 | =M-ESC q= | stop the presentation                    |
+| =M-ESC 0= | all text sizes back to the start         |
 
 They are not active in other buffers, such as a REPL, another file or the
 buffer where a code block is edited, so your own keys keep working there
@@ -286,17 +287,20 @@ title strip) and the title and section pages keep theirs:
 All frames of all slides start at =org-slideboard-text-scale= (2, in steps
 of =text-scale-mode=).  There are two ways to change it during the show:
 
-| Keys                                         | Changes                                    |
-|----------------------------------------------+--------------------------------------------|
-| ~C-=~ / =C--=                                | all frames of all slides                   |
-| =C-c }= / =C-c {=                            | the selected frame of this slide only      |
-| Emacs zoom: ~C-x C-=~, =C-x C--=, Ctrl+wheel | the selected frame of this slide only      |
-| =C-x C-0=                                    | the selected frame back to the common size |
+| Keys                                         | Changes                                           |
+|----------------------------------------------+---------------------------------------------------|
+| ~C-=~ / =C--=                                | all frames of all slides                          |
+| =C-c }= / =C-c {=                            | the selected frame of this slide only             |
+| Emacs zoom: ~C-x C-=~, =C-x C--=, Ctrl+wheel | the selected frame of this slide only             |
+| =C-x C-0=                                    | the selected frame back to the common size        |
+| =M-ESC 0=                                    | everything back to the size the show started with |
 
 A frame changed on its own keeps its size when you come back to the slide,
 and moves with ~C-=~ / =C--=: a frame one step larger stays one step larger
 than the others.  Use it for a slide with more text than fits in one of its
-frames.  These changes last until the show stops.  To keep Emacs's zoom
+frames.  =M-ESC 0= undoes all of it at once: every frame of every slide goes
+back to the size the show started with.  Stopping the show does the same,
+so the next show starts at the usual size again.  To keep Emacs's zoom
 keys as plain zoom, which is lost when the slide is shown again, set
 =org-slideboard-zoom-resizes-frame= to nil.  All these keys can be changed,
 see [[*Changing the keys][Changing the keys]].
