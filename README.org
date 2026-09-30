@@ -44,14 +44,8 @@ enough.
 It needs Emacs 28.1 and Org 9.6 or later.  org-modern, ESS and
 python-mode are used when installed, but are not required.
 
-To use function keys, bind them yourself (Emacs reserves F5 to F9 for
-users, so packages do not bind them):
-
-#+begin_src emacs-lisp
-(with-eval-after-load 'org-slideboard
-  (define-key org-slideboard-mode-map [f5] #'org-slideboard-start-slideshow)
-  (define-key org-slideboard-mode-map [f6] #'org-slideboard-execute-slide))
-#+end_src
+org-slideboard does not bind function keys, which Emacs reserves for
+users; see [[*Changing the keys][Changing the keys]] to add your own.
 
 * Overview
 
@@ -61,8 +55,9 @@ org-slideboard offers:
   children are shown as a title strip above one window per column.
 - *Images fitted to the column*: plots are drawn by org-slideboard itself and
   scaled to the width and height of their window.
-- *One text size*: all slides use the same text size, which ~C-=~ and
-  =C--= change for the rest of the show.
+- *Text size under your control*: all frames of all slides share one text
+  size, which ~C-=~ and =C--= change; =C-c }= and =C-c {= (or Emacs's zoom
+  keys) change a single frame.  Titles keep their size.
 - *Aligned tables*: tables are aligned to what is displayed, including
   expanded macros, equation images and proportional fonts.
 - *Reflowed paragraphs*: hard-wrapped source lines are joined on screen, as
@@ -135,7 +130,7 @@ a =BEAMER_col= property (or the =BMCOL= tag).
 
 The column widths on screen are proportional to the =BEAMER_col= values.  A
 column without a width gets an equal share.  Text between the slide heading
-and the first column is shown in the title strip.
+and the first column is shown in a full-width frame above the columns.
 
 ** Title page
 The title page is made from these keywords:
@@ -174,21 +169,30 @@ Starting and stopping do not change the buffer: the tags of slide headings
 are hidden with overlays.
 
 ** Keys
-These are active while =org-slideboard-mode= is on (it is turned on by
-=org-slideboard-start-slideshow=):
+During a show, these keys work in the windows of the slides: the title
+strip, the frames, and the title and section pages.
 
-| Key       | Command                              |
-|-----------+--------------------------------------|
-| =PgDn=    | next slide                           |
-| =PgUp=    | previous slide                       |
-| =C-c C-r= | show the current slide again         |
-| ~C-=~     | larger text (this and later slides)  |
-| =C--=     | smaller text (this and later slides) |
-| =M-ESC g= | go to slide number                   |
-| =M-ESC t= | table of contents                    |
-| =M-ESC q= | stop the presentation                |
+| Key       | Command                                  |
+|-----------+------------------------------------------|
+| =PgDn=    | next slide                               |
+| =PgUp=    | previous slide                           |
+| =C-c ;=   | show the current slide again             |
+| ~C-=~     | larger text in all frames of all slides  |
+| =C--=     | smaller text in all frames of all slides |
+| =C-c }=   | larger text in the selected frame only   |
+| =C-c {=   | smaller text in the selected frame only  |
+| =M-ESC g= | go to slide number                       |
+| =M-ESC t= | table of contents                        |
+| =M-ESC q= | stop the presentation                    |
 
-The keys work from any window, including a column window.
+They are not active in other buffers, such as a REPL, another file or the
+buffer where a code block is edited, so your own keys keep working there
+during the show.  =C-c ;= and =C-c {= / =C-c }= are in the range Emacs
+sets aside for minor modes, so they do not clash with =C-c= plus a letter,
+which are yours.  Org itself uses them, though (commenting a heading, and
+table formula tools); in slide windows the show's keys take precedence.  If
+you need those Org commands during a show, or any of these keys clash with
+your own, change them as described below.
 
 On a slide with code and results (see [[*Code and results][Code and results]]),
 these work in the code window:
@@ -197,6 +201,45 @@ these work in the code window:
 |-----------+-------------------------------------------------------------------------------|
 | =C-c C-c= | run the code and show the new results                                         |
 | =C-c '=   | edit the code next to a running REPL (or your own key for =org-edit-special=) |
+
+** Changing the keys
+The keys of the show are in =org-slideboard-keys-mode-map=, and those of the
+code window in =org-slideboard-code-mode-map=.  To change, add or remove a
+key, set it in the map after org-slideboard is loaded:
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'org-slideboard
+  ;; your own keys for the text size, instead of C-= and C--
+  (define-key org-slideboard-keys-mode-map (kbd "C-=") nil)
+  (define-key org-slideboard-keys-mode-map (kbd "C--") nil)
+  (define-key org-slideboard-keys-mode-map (kbd "<f9>") #'org-slideboard-increase-text-size)
+  (define-key org-slideboard-keys-mode-map (kbd "S-<f9>") #'org-slideboard-decrease-text-size)
+  ;; function keys
+  (define-key org-slideboard-keys-mode-map [f6] #'org-slideboard-execute-slide)
+  (define-key org-slideboard-keys-mode-map [f7] #'org-slideboard-next-slide)
+  (define-key org-slideboard-keys-mode-map [f8] #'org-slideboard-previous-slide))
+#+end_src
+
+A key set to =nil= falls back to your own binding.  With Emacs 29 or later,
+=keymap-set= does the same, e.g.
+=(keymap-set org-slideboard-keys-mode-map "<f6>" #'org-slideboard-execute-slide)=.
+With =use-package=, use =:bind= with =:map=:
+
+#+begin_src emacs-lisp
+(use-package org-slideboard
+  :bind (:map org-slideboard-keys-mode-map
+         ("<f6>" . org-slideboard-execute-slide)
+         ("C-c ;" . nil)))
+#+end_src
+
+Keys bound globally, e.g. =(global-set-key (kbd "<f5>")
+#'org-slideboard-start-slideshow)=, also work in slide windows unless the
+show uses the same key.
+
+Emacs's own zoom keys (~C-x C-=~, =C-x C--=, =C-x C-0=, Ctrl+mouse wheel)
+change the size of the selected frame during a show, see [[*Text size][Text size]].  To
+keep them as plain Emacs zoom, set =org-slideboard-zoom-resizes-frame= to
+nil.
 
 ** Table of contents
 =M-ESC t= lists all slides, including "Title page: …" and "Section: …"
@@ -210,9 +253,13 @@ go straight into the file.
 * How slides are displayed
 
 ** Layout
-- The frame is split into a *title strip* (the heading) and one window per
-  column, with mode lines hidden.
-- Slides without columns use a single window, as before.
+- Each slide has a *title strip* at the top, with its heading, and below
+  it one or more *frames* (windows, with mode lines hidden):
+  - the body of a slide without columns;
+  - text between the heading and the first beamer column or code block, in
+    a full-width frame;
+  - one frame per beamer column, and for code and results (see
+    [[*Code and results][Code and results]]).
 - Title and section pages use a separate buffer, =*org-slideboard-page*=, with the
   text centred.  If =org-slideboard-animate-pages= is on, the lines are animated
   in; any key press skips the animation.
@@ -226,24 +273,37 @@ overlays.  Each image is scaled down to at most
 This does not depend on =org-image-actual-width= or other inline image
 settings.  An image
 file that has changed since it was last shown, e.g. a plot rewritten by a
-code block, is read again, so =C-c C-r= (or =C-c C-c= in a code window) shows
+code block, is read again, so =C-c ;= (or =C-c C-c= in a code window) shows
 the new version rather than the one Emacs cached.  When the presentation stops,
 the normal Org inline images are shown again.
 
 ** Text size
-All slides have the same text size, =org-slideboard-text-scale= (2, in steps
-of =text-scale-mode=): the text of a slide, the title strip above beamer
-columns, the columns, and code and results.  Text is not shrunk to fit, so
-the size does not jump from slide to slide.
+Only the text in the frames of a slide changes size.  Slide titles (the
+title strip) and the title and section pages keep theirs:
+=org-slideboard-title-text-scale= (2) and =org-slideboard-page-text-scale=
+(5).  Text is never shrunk to fit.
 
-- ~C-=~ and =C--= make the text one step larger or smaller, on this slide
-  and all the others, for the rest of the show.  If a slide has more than
-  fits, make the text smaller while it is shown.
-- Title and section pages have their own size,
-  =org-slideboard-page-text-scale= (5); ~C-=~ and =C--= on a page change
-  that.
-- To start every show at another size, set =org-slideboard-text-scale=, or
-  =#+SLIDEBOARD: text-scale:3= for one presentation.
+All frames of all slides start at =org-slideboard-text-scale= (2, in steps
+of =text-scale-mode=).  There are two ways to change it during the show:
+
+| Keys                                         | Changes                                    |
+|----------------------------------------------+--------------------------------------------|
+| ~C-=~ / =C--=                                | all frames of all slides                   |
+| =C-c }= / =C-c {=                            | the selected frame of this slide only      |
+| Emacs zoom: ~C-x C-=~, =C-x C--=, Ctrl+wheel | the selected frame of this slide only      |
+| =C-x C-0=                                    | the selected frame back to the common size |
+
+A frame changed on its own keeps its size when you come back to the slide,
+and moves with ~C-=~ / =C--=: a frame one step larger stays one step larger
+than the others.  Use it for a slide with more text than fits in one of its
+frames.  These changes last until the show stops.  To keep Emacs's zoom
+keys as plain zoom, which is lost when the slide is shown again, set
+=org-slideboard-zoom-resizes-frame= to nil.  All these keys can be changed,
+see [[*Changing the keys][Changing the keys]].
+
+To start every show at another size, set =org-slideboard-text-scale=, or
+=#+SLIDEBOARD: text-scale:3= for one presentation (=title-scale:= for
+titles).
 
 ** Equations
 LaTeX math (=$...$=, =\(...\)=, =\[...\]=, =$$...$$= and environments
@@ -630,6 +690,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =animate=        | =org-slideboard-animate-pages=                        | =t= / =nil=                    |
 | =page-scale=     | =org-slideboard-page-text-scale=                      | number                         |
 | =text-scale=     | =org-slideboard-text-scale=                           | number                         |
+| =title-scale=    | =org-slideboard-title-text-scale=                     | number                         |
 | =image-width=    | =org-slideboard-image-width-fraction=                 | number                         |
 | =image-height=   | =org-slideboard-image-height-fraction=                | number                         |
 | =clutter=        | =org-slideboard-hide-clutter=                         | =t= / =nil=                    |
@@ -668,7 +729,9 @@ that is in effect (the local one if there is one).
 
 | Variable                                   | Default                                        | Meaning                                                            |
 |--------------------------------------------+------------------------------------------------+--------------------------------------------------------------------|
-| =org-slideboard-text-scale=                | 2                                              | text size of all slides                                            |
+| =org-slideboard-text-scale=                | 2                                              | text size of the frames of all slides                              |
+| =org-slideboard-title-text-scale=          | 2                                              | text size of slide titles                                          |
+| =org-slideboard-zoom-resizes-frame=        | t                                              | Emacs's zoom keys resize the selected frame for the show           |
 | =org-slideboard-image-width-fraction=      | 0.8                                            | maximum image width, as a fraction of the window width             |
 | =org-slideboard-image-height-fraction=     | 0.8                                            | maximum image height, as a fraction of the window height           |
 | =org-slideboard-hide-clutter=              | t                                              | hide drawers, keywords, src blocks and raw LaTeX                   |

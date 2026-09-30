@@ -125,14 +125,45 @@ on lines of their own.  Inline math is not moved."
   :group 'org-slideboard)
 
 (defcustom org-slideboard-text-scale 2
-  "Text scale of the slides, in steps of `text-scale-mode'.
-All slides get this size: their text, the title strip above beamer
-columns, the columns, and code and results.  Nothing is shrunk to fit;
-\\[org-slideboard-increase-text-size] and \\[org-slideboard-decrease-text-size] change the size for this
-and all later slides.  Title and section pages have their own size,
+  "Text scale of the frames of all slides, in steps of `text-scale-mode'.
+The frames are the windows of a slide below its title: its body, the
+text before its beamer columns, the columns, and code and results.
+Nothing is shrunk to fit.  \\[org-slideboard-increase-text-size] and
+\\[org-slideboard-decrease-text-size] change the size of all frames of
+all slides; \\[org-slideboard-increase-frame-text-size] and
+\\[org-slideboard-decrease-frame-text-size] (or Emacs's own zoom keys)
+change the selected frame only.  Slide titles have their own size,
+`org-slideboard-title-text-scale', and title and section pages
 `org-slideboard-page-text-scale'."
   :type 'integer
   :group 'org-slideboard)
+
+(defcustom org-slideboard-title-text-scale 2
+  "Text scale of the slide titles, the heading strip at the top of a slide.
+The size keys do not change it."
+  :type 'integer
+  :group 'org-slideboard)
+
+(defcustom org-slideboard-zoom-resizes-frame t
+  "If non-nil, Emacs's zoom keys resize a frame of a slide for the show.
+Then \\[text-scale-adjust] and the other zoom keys in a frame work like
+\\[org-slideboard-increase-frame-text-size]: the frame keeps its size
+when its slide is shown again.  If nil, they are plain Emacs zoom, and
+the size is lost when the slide is shown again."
+  :type 'boolean
+  :group 'org-slideboard)
+
+(defvar org-slideboard--frame-offsets '()
+  "Size changes of single frames during the show, as (MARKER . STEPS).
+MARKER is at the start of the frame's text in the presentation buffer,
+so a frame keeps its size when its slide is shown again.")
+
+(defvar-local org-slideboard--frame-key nil
+  "Start of this frame's text in the presentation buffer, or nil.
+Set in the indirect buffers that show the frames of a slide.")
+
+(defvar org-slideboard--scaling nil
+  "Non-nil while org-slideboard itself changes a text scale.")
 
 (defcustom org-slideboard-image-width-fraction 0.8
   "Images are scaled to at most this fraction of the window width."
@@ -684,13 +715,37 @@ with overlays, so the buffer text is not changed."
     (with-no-warnings
       (org-display-inline-images nil t (point-min) (point-max)))))
 
+(defun org-slideboard--frame-offset (pos)
+  "Return the size change, in steps, of the frame whose text starts at POS."
+  (or (cdr (cl-find-if (lambda (e) (eql (marker-position (car e)) pos))
+                       org-slideboard--frame-offsets))
+      0))
+
+(defun org-slideboard--set-frame-offset (pos steps)
+  "Remember that the frame whose text starts at POS is STEPS larger."
+  (let ((entry (cl-find-if (lambda (e) (eql (marker-position (car e)) pos))
+                           org-slideboard--frame-offsets)))
+    (if entry
+        (setcdr entry steps)
+      ;; in the presentation buffer: the frame's own buffer goes away
+      ;; with the slide
+      (push (cons (set-marker (make-marker) pos
+                              (or (buffer-base-buffer) (current-buffer)))
+                  steps)
+            org-slideboard--frame-offsets))))
+
 (defun org-slideboard--set-text-scale (wins)
-  "Give the buffers of WINS the slide text size, `org-slideboard-text-scale'.
-Equations and tables are laid out again for that size."
-  (let ((scale (or org-slideboard-text-scale 0)))
+  "Give the frames in WINS their text size.
+That is `org-slideboard-text-scale' plus the frame's own change, see
+`org-slideboard-increase-frame-text-size'.  Equations and tables are
+laid out again for that size."
+  (let ((org-slideboard--scaling t))
     (dolist (w wins)
       (with-current-buffer (window-buffer w)
-        (text-scale-set scale)
+        (text-scale-set (+ (or org-slideboard-text-scale 0)
+                           (if org-slideboard--frame-key
+                               (org-slideboard--frame-offset org-slideboard--frame-key)
+                             0)))
         (org-slideboard--scale-latex w)
         (org-slideboard--align-tables w)))))
 
@@ -899,6 +954,7 @@ I is the column index, used to name the indirect buffer."
       (widen)
       (if (fboundp 'org-fold-show-all) (org-fold-show-all) (outline-show-all))
       (narrow-to-region (nth 2 col) (nth 3 col))
+      (setq org-slideboard--frame-key (nth 2 col))
       ;; the clone copied the base buffer's mode variables, but the face
       ;; remapping was reset above, so apply the beautify modes afresh
       (setq org-slideboard--beautified nil
@@ -915,48 +971,75 @@ I is the column index, used to name the indirect buffer."
       (org-slideboard--style-lists)
       (org-slideboard--preview-latex)
       (org-slideboard--show-images win)
+      (org-slideboard-keys-mode 1)
       (when (eq (nth 4 col) 'code)
         (org-slideboard-code-mode 1))
       (set-window-start win (point-min)))))
 
+(defun org-slideboard--visible-text-p (beg end)
+  "Return non-nil if BEG to END has text that is shown on a slide.
+Blank lines, keyword lines and stray LaTeX commands, which are hidden
+as clutter, do not count."
+  (save-excursion
+    (goto-char beg)
+    (let ((found nil))
+      (while (and (not found) (< (point) end))
+        (unless (looking-at-p "[ \t]*\\(?:$\\|#\\+\\|\\\\[a-zA-Z]+\\)")
+          (setq found t))
+        (forward-line 1))
+      found)))
+
 (defun org-slideboard--display-columns (cols &optional direction)
-  "Lay out the current slide with beamer columns COLS side by side.
-With DIRECTION below, the columns are stacked instead; this is used
-for code above its results.  The current buffer must be the base
-buffer, narrowed to the slide."
+  "Lay out the current slide: its title, then its frames.
+The title strip at the top shows the heading only, at
+`org-slideboard-title-text-scale'.  Below it, text before the first of
+COLS gets a full-width frame, and then each of COLS a frame, side by
+side, or with DIRECTION below one above the other (for code above its
+results).  COLS are beamer columns, code and results, or the body of
+the slide; see `org-slideboard--slide-columns'.  The current buffer
+must be the base buffer, narrowed to the slide."
   (let* ((base (current-buffer))
          (title-win (selected-window))
          (total (apply #'+ (mapcar #'car cols)))
+         ;; the heading with its drawers and planning lines
+         (meta-end (save-excursion
+                     (goto-char (point-min))
+                     (org-end-of-meta-data t)
+                     (min (point) (point-max))))
          (title-end (save-excursion
-                      ;; the columns may not be in buffer order, e.g.
-                      ;; results left of the code
-                      (goto-char (apply #'min (mapcar #'cadr cols)))
+                      (goto-char meta-end)
                       (skip-chars-backward " \t\n")
-                      (max (line-end-position) (point-min)))))
-    ;; the title strip: heading plus anything before the first column
+                      (max (line-end-position) (point-min))))
+         ;; the columns may not be in buffer order, e.g. results left
+         ;; of the code
+         (first-col (apply #'min (mapcar #'cadr cols)))
+         (intro (and (< meta-end first-col)
+                     (org-slideboard--visible-text-p meta-end first-col)
+                     (list 1.0 meta-end meta-end first-col))))
+    ;; the title strip
     (narrow-to-region (point-min) title-end)
-    ;; `or': an older `defvar' of this variable may have left it nil
-    (text-scale-set (or org-slideboard-text-scale 0))
+    (let ((org-slideboard--scaling t))
+      (text-scale-set (or org-slideboard-title-text-scale 0)))
     (org-slideboard--hide-clutter (point-min) (point-max))
     (org-slideboard--hide-drawers)
-    (org-slideboard--reflow)
     (org-slideboard--expand-macros)
-    (org-slideboard--style-lists)
     (org-slideboard--preview-latex)
-    (org-slideboard--align-tables title-win)
     (org-slideboard--hide-mode-line title-win)
-    ;; the window may keep a start from an earlier display of the buffer,
-    ;; past the title strip, which would then look empty
-    (set-window-start title-win (point-min))
     (goto-char (point-min))
-    ;; size the title strip first, so the column heights are final
-    ;; before images are scaled and text is fitted
+    ;; size the title strip and the text before the columns first, so
+    ;; the column heights are final before images are scaled
     (let* ((win (split-window title-win nil 'below))
            (col-wins '())
            (i 1))
       (fit-window-to-buffer title-win (floor (window-total-height (frame-root-window)) 3) 1)
-      (with-selected-window title-win (org-slideboard--show-images))
-      ;; the columns
+      (when intro
+        (let ((rest (split-window win nil 'below)))
+          (org-slideboard--setup-column-window win base intro 0)
+          (org-slideboard--set-text-scale (list win))
+          (fit-window-to-buffer win (floor (window-total-height (frame-root-window)) 3) 1)
+          (push win col-wins)
+          (setq win rest)))
+      ;; the frames
       (let* ((below (eq direction 'below))
              (space (if below (window-total-height win) (window-total-width win))))
         (while cols
@@ -1002,10 +1085,10 @@ buffer, narrowed to the slide."
                org-slideboard-section-pages org-slideboard-animate-pages
                org-slideboard-hanging-indent org-slideboard-hide-emphasis-markers
                org-slideboard-hide-macro-markers org-slideboard-expand-macros
-               org-slideboard-align-tables
+               org-slideboard-align-tables org-slideboard-zoom-resizes-frame
                org-slideboard-center-display-math))
   (put var 'safe-local-variable #'booleanp))
-(dolist (var '(org-slideboard-text-scale
+(dolist (var '(org-slideboard-text-scale org-slideboard-title-text-scale
                org-slideboard-page-text-scale org-slideboard-image-width-fraction
                org-slideboard-image-height-fraction org-slideboard-list-indent
                org-slideboard-latex-size org-slideboard-latex-scale
@@ -1055,6 +1138,7 @@ buffer, narrowed to the slide."
     ("animate" org-slideboard-animate-pages booleanp)
     ("page-scale" org-slideboard-page-text-scale numberp)
     ("text-scale" org-slideboard-text-scale numberp)
+    ("title-scale" org-slideboard-title-text-scale numberp)
     ("image-width" org-slideboard-image-width-fraction numberp)
     ("image-height" org-slideboard-image-height-fraction numberp)
     ("clutter" org-slideboard-hide-clutter booleanp)
@@ -1745,13 +1829,15 @@ key press skips the rest of the animation."
   (delete-other-windows)
   (switch-to-buffer (get-buffer-create org-slideboard--page-buffer))
   (let ((inhibit-read-only t)) (erase-buffer))
+  (org-slideboard-keys-mode 1)
   (setq buffer-undo-list t)
   (setq-local cursor-type nil)
   (setq-local show-trailing-whitespace nil)
   (org-slideboard--disable-modes)
   (setq-local indent-tabs-mode nil)
   (org-slideboard--hide-mode-line (selected-window))
-  (text-scale-set (or scale 5))
+  (let ((org-slideboard--scaling t))
+    (text-scale-set (or scale 5)))
   (let* ((cols (window-max-chars-per-line))
          (rows (/ (window-body-height nil t) (window-font-height nil 'default)))
          (vpos (max 0 (/ (- rows (length lines)) 2))))
@@ -1828,6 +1914,7 @@ On a title or section page, show that page again."
         (base (org-slideboard--base-buffer)))
     (org-slideboard--teardown-columns)
     (switch-to-buffer base)
+    (org-slideboard-keys-mode 1)
     (goto-char pos))
   (setq org-slideboard-presentation-file (org-slideboard--file))
   (delete-other-windows)
@@ -1861,21 +1948,14 @@ On a title or section page, show that page again."
           (setq cols (if (cdr split) src (reverse src))
                 src (car split))))
       (setq org-slideboard--split-direction src))
-    (if cols
-        (org-slideboard--display-columns cols org-slideboard--split-direction)
-      (delete-other-windows)
-      (org-slideboard--hide-clutter (point-min) (point-max))
-      (org-slideboard--hide-drawers)
-      (org-slideboard--reflow)
-      (org-slideboard--expand-macros)
-      (org-slideboard--style-lists)
-      ;; preview equations in the current subtree
-      (org-slideboard--preview-latex)
-      (org-slideboard--show-images)
-      (org-slideboard--set-text-scale (list (selected-window)))
-      ;; start at the heading, not at a hidden drawer below it
-      (goto-char (point-min))
-      (set-window-start (selected-window) (point-min)))
+    ;; a slide without columns is one frame: its body
+    (unless cols
+      (let ((body (save-excursion
+                    (goto-char (point-min))
+                    (org-end-of-meta-data t)
+                    (min (point) (point-max)))))
+        (setq cols (list (list 1.0 body body (point-max))))))
+    (org-slideboard--display-columns cols org-slideboard--split-direction)
 
     ;; evaluate special code blocks last as they may change the arrangement
     (save-excursion
@@ -2030,6 +2110,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (unless org-slideboard-mode (org-slideboard-mode 1))
   (add-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
   (add-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
+  (add-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
   (setq org-slideboard-current-slide-number 1)
   (org-slideboard-goto-slide 1))
 
@@ -2039,6 +2120,10 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (interactive)
   (remove-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
   (remove-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
+  (remove-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
+  (dolist (entry org-slideboard--frame-offsets)
+    (set-marker (car entry) nil))
+  (setq org-slideboard--frame-offsets '())
   (dolist (buf org-slideboard--scaled-buffers)
     (when (buffer-live-p buf)
       (with-current-buffer buf (text-scale-set 0))))
@@ -2061,6 +2146,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
 
   (when org-slideboard-presentation-file (find-file org-slideboard-presentation-file))
   (widen)
+  (org-slideboard-keys-mode -1)
   ;; the equation images were made for the slides
   (org-clear-latex-preview)
   (text-scale-set 0)
@@ -2135,54 +2221,140 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
 
 
 (defun org-slideboard--change-text-scale (delta)
-  "Change the text size by DELTA steps for this and all later slides.
-On a title or section page this changes `org-slideboard-page-text-scale',
-otherwise `org-slideboard-text-scale', which all slides use."
-  (let* ((page (equal (buffer-name) org-slideboard--page-buffer))
-         (var (if page 'org-slideboard-page-text-scale 'org-slideboard-text-scale))
-         (new (+ (or (buffer-local-value var (org-slideboard--show-buffer)) 0) delta)))
-    ;; in the presentation buffer, so a value local to it (file-local
-    ;; variable or #+SLIDEBOARD:) is changed there, and a global one globally
-    (with-current-buffer (org-slideboard--show-buffer)
-      (set var new))
-    (if org-slideboard--running
-        (org-slideboard-goto-slide org-slideboard-current-slide-number)
-      (text-scale-set new))
-    (message "%s = %s" var new)))
+  "Change the text size of all frames of all slides by DELTA steps.
+Slide titles and title and section pages keep their size."
+  (if (equal (buffer-name) org-slideboard--page-buffer)
+      (message "Title and section pages keep their size")
+    (let ((new (+ (or (buffer-local-value 'org-slideboard-text-scale
+                                          (org-slideboard--show-buffer))
+                      0)
+                  delta)))
+      ;; in the presentation buffer, so a value local to it (file-local
+      ;; variable or #+SLIDEBOARD:) is changed there, and a global one
+      ;; globally
+      (with-current-buffer (org-slideboard--show-buffer)
+        (setq org-slideboard-text-scale new))
+      (when org-slideboard--running
+        (let ((key org-slideboard--frame-key)
+              (pos (point)))
+          (org-slideboard-goto-slide org-slideboard-current-slide-number)
+          (org-slideboard--select-frame key pos)))
+      (message "Text size of all slides: %s" new))))
+
+(defun org-slideboard--select-frame (key pos)
+  "Select the frame whose text starts at KEY, with point at POS.
+Do nothing if KEY is nil or no window shows that frame."
+  (let ((win (and key
+                  (cl-find-if (lambda (w)
+                                (eql (buffer-local-value 'org-slideboard--frame-key
+                                                         (window-buffer w))
+                                     key))
+                              (window-list)))))
+    (when win
+      (select-window win)
+      (goto-char (max (point-min) (min pos (point-max)))))))
+
+(defun org-slideboard--change-frame-scale (delta)
+  "Change the text size of the selected frame of this slide by DELTA steps."
+  (if (not org-slideboard--frame-key)
+      (message "Not in a frame of a slide; slide titles keep their size")
+    (let ((steps (+ (org-slideboard--frame-offset org-slideboard--frame-key) delta)))
+      (org-slideboard--set-frame-offset org-slideboard--frame-key steps)
+      (org-slideboard--set-text-scale (get-buffer-window-list nil nil t))
+      (message "Text size of this frame: %+d" steps))))
+
+(defun org-slideboard-increase-frame-text-size ()
+  "Increase the text size of the selected frame of this slide.
+The frame keeps the size when the slide is shown again.  Emacs's own
+zoom keys, such as \\[text-scale-adjust], do the same during the show."
+  (interactive)
+  (org-slideboard--change-frame-scale 1))
+
+(defun org-slideboard-decrease-frame-text-size ()
+  "Decrease the text size of the selected frame of this slide.
+See `org-slideboard-increase-frame-text-size'."
+  (interactive)
+  (org-slideboard--change-frame-scale -1))
+
+(defun org-slideboard--text-scale-changed ()
+  "Keep a size change made with Emacs's zoom keys during the show.
+In a frame of a slide, it becomes that frame's own size, see
+`org-slideboard-increase-frame-text-size'; turning the zoom off (as
+\\[text-scale-adjust] 0 does) goes back to the size of all frames.
+Slide titles and pages are set back to their size.  For
+`text-scale-mode-hook'."
+  (when (and org-slideboard--running (not org-slideboard--scaling)
+             org-slideboard-zoom-resizes-frame)
+    (let ((buf (current-buffer)))
+      (cond
+       (org-slideboard--frame-key
+        (org-slideboard--set-frame-offset
+         org-slideboard--frame-key
+         (if text-scale-mode
+             (- text-scale-mode-amount (or org-slideboard-text-scale 0))
+           0))
+        ;; after the zoom command is done
+        (run-at-time 0 nil (lambda ()
+                             (when (buffer-live-p buf)
+                               (with-current-buffer buf
+                                 (org-slideboard--set-text-scale
+                                  (get-buffer-window-list buf nil t)))))))
+       ((or (equal (buffer-name) org-slideboard--page-buffer)
+            (and (not (buffer-base-buffer))
+                 org-slideboard-presentation-file
+                 (equal buffer-file-name
+                        (expand-file-name org-slideboard-presentation-file))))
+        (let ((scale (if (equal (buffer-name) org-slideboard--page-buffer)
+                         org-slideboard-page-text-scale
+                       org-slideboard-title-text-scale)))
+          (run-at-time 0 nil (lambda ()
+                               (when (buffer-live-p buf)
+                                 (with-current-buffer buf
+                                   (let ((org-slideboard--scaling t))
+                                     (text-scale-set (or scale 0))))
+                                 (message "Titles keep their size"))))))))))
 
 
 (defun org-slideboard-increase-text-size ()
-  "Increase the text size of this and all later slides.
-Bound to \\[org-slideboard-increase-text-size]."
+  "Increase the text size of all frames of all slides.
+Slide titles keep their size.  To change one frame only, use
+\\[org-slideboard-increase-frame-text-size]."
   (interactive)
   (org-slideboard--change-text-scale 1))
 
 
 (defun org-slideboard-decrease-text-size ()
-  "Decrease the text size of this and later slides.
-Bound to \\[org-slideboard-decrease-text-size]."
+  "Decrease the text size of all frames of all slides.
+See `org-slideboard-increase-text-size'."
   (interactive)
   (org-slideboard--change-text-scale -1))
 
 ;;* Menu and org-slideboard-mode
 
-(defvar org-slideboard-mode-map
+(defvar org-slideboard-keys-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map [next] 'org-slideboard-next-slide)
     (define-key map [prior] 'org-slideboard-previous-slide)
 
-    ;; F5-F9 are reserved for users; bind them in your configuration
-    (define-key map (kbd "C-c C-r") 'org-slideboard-execute-slide)
+    ;; F5-F9 are reserved for users, and C-c C-<letter> for major modes;
+    ;; C-c followed by { } < > : ; is for minor modes like this one
+    (define-key map (kbd "C-c ;") 'org-slideboard-execute-slide)
     (define-key map (kbd "C--") 'org-slideboard-decrease-text-size)
     (define-key map (kbd "C-=") 'org-slideboard-increase-text-size)
+    (define-key map (kbd "C-c }") 'org-slideboard-increase-frame-text-size)
+    (define-key map (kbd "C-c {") 'org-slideboard-decrease-frame-text-size)
     (define-key map (kbd "\e\eg") 'org-slideboard-goto-slide)
     (define-key map (kbd "\e\et") 'org-slideboard-toc)
     (define-key map (kbd "\e\eq") 'org-slideboard-stop-slideshow)
     map)
-  "Keymap for function ‘org-slideboard-mode’.")
+  "Keys of the show, active only in slide windows.
+They work in the title strip, the frames and the title and section
+pages of a show, see `org-slideboard-keys-mode', so they do not
+shadow your own keys in other buffers.  Change them with `define-key'
+or `keymap-set' on this map.")
 
 
-(easy-menu-define org-slideboard-menu org-slideboard-mode-map "Menu for org-slideboard."
+(easy-menu-define org-slideboard-menu org-slideboard-keys-mode-map "Menu for org-slideboard."
   '("org-slideboard"
     ["Start slide show" org-slideboard-start-slideshow t]
     ["Next slide" org-slideboard-next-slide t]
@@ -2193,18 +2365,27 @@ Bound to \\[org-slideboard-decrease-text-size]."
     ["Stop slide show"  org-slideboard-stop-slideshow t]))
 
 
+(define-minor-mode org-slideboard-keys-mode
+  "Minor mode for the keys of a show, in the buffers of its slides.
+It is turned on in the title strip, the frames and the title and
+section pages while `org-slideboard-mode' runs a show.  Other buffers,
+such as a REPL or another file, keep your own keys.
+
+\\{org-slideboard-keys-mode-map}"
+  :lighter nil
+  :keymap org-slideboard-keys-mode-map)
+
 ;;;###autoload
 (define-minor-mode org-slideboard-mode
   "Minor mode for presenting Org files as slides.
-It is turned on by `org-slideboard-start-slideshow', and turning it
-off stops the show.
-
-\\{org-slideboard-mode-map}"
+It is on while a show runs: `org-slideboard-start-slideshow' turns it
+on, and turning it off stops the show.  The keys of the show are in
+`org-slideboard-keys-mode-map', active only in slide windows, see
+`org-slideboard-keys-mode'."
   :init-value nil
   :lighter " org-slideboard"
   :global t
   :group 'org-slideboard
-  :keymap org-slideboard-mode-map
   ;; https://www.gnu.org/software/emacs/manual/html_node/elisp/Minor-Mode-Conventions.html
   (if org-slideboard-mode
       (when (bound-and-true-p flyspell-mode)
