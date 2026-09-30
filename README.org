@@ -415,7 +415,10 @@ or section with the property =SLIDEBOARD_SRC_SPLIT=:
 =org-slideboard-src-code-width= (0.5) is the code's share of the width
 (side by side) or of the height (top to bottom).  Plots in the results are
 scaled to their window, and text is fitted as usual.  The code window shows
-the whole block, including its =#+begin_src= and =#+end_src= lines.
+the whole block, including its =#+begin_src= and =#+end_src= lines.  When
+code and results are one above the other (=tb=, =bt=), a thin line in the
+face =org-slideboard-divider= separates them; its =:background= sets the
+colour and its =:height= the thickness.
 
 *** Code in a beamer column
 When a beamer column holds a block to be shown with its results, that
@@ -703,13 +706,14 @@ that is in effect (the local one if there is one).
 The title and section pages use these faces, which can be customized with
 =M-x customize-face=:
 
-| Face                           | Used for                             |
-|--------------------------------+--------------------------------------|
-| =org-slideboard-page-title=    | title on the title page              |
-| =org-slideboard-page-subtitle= | subtitle                             |
-| =org-slideboard-page-info=     | author and date                      |
-| =org-slideboard-page-section=  | heading on a section page            |
-| =org-slideboard-bullet=        | list bullets during the presentation |
+| Face                           | Used for                                           |
+|--------------------------------+----------------------------------------------------|
+| =org-slideboard-page-title=    | title on the title page                            |
+| =org-slideboard-page-subtitle= | subtitle                                           |
+| =org-slideboard-page-info=     | author and date                                    |
+| =org-slideboard-page-section=  | heading on a section page                          |
+| =org-slideboard-bullet=        | list bullets during the presentation               |
+| =org-slideboard-divider=       | line between code and results, one above the other |
 
 * Tips
 

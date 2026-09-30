@@ -189,6 +189,14 @@ to show plain org."
 Change :height to make the bullets bigger or smaller."
   :group 'org-slideboard)
 
+(defface org-slideboard-divider
+  '((((background dark)) :background "gray35" :height 0.1 :box nil)
+    (t :background "gray75" :height 0.1 :box nil))
+  "Face of the line between code and results shown one above the other.
+The line is the mode line of the upper window in this face; its
+:height sets the thickness and its :background the colour."
+  :group 'org-slideboard)
+
 (defcustom org-slideboard-list-bullets '("●" "○" "■" "□")
   "Bullets for unordered list items during the show, by nesting depth.
 The first is used for top-level items, the second for sub-items, and
@@ -893,6 +901,15 @@ when the image is resized."
   (set-window-parameter win 'mode-line-format 'none)
   (push win org-slideboard--windows))
 
+(defun org-slideboard--divider (win)
+  "Draw a thin line along the bottom of WIN, in `org-slideboard-divider'.
+WIN's hidden mode line is shown again, as an empty line in that face."
+  (set-window-parameter win 'mode-line-format " ")
+  (with-current-buffer (window-buffer win)
+    (dolist (face '(mode-line mode-line-active mode-line-inactive))
+      (push (list face 'org-slideboard-divider) face-remapping-alist))
+    (force-mode-line-update)))
+
 (defun org-slideboard--setup-column-window (win base col i)
   "Show column COL of buffer BASE in window WIN.
 I is the column index, used to name the indirect buffer."
@@ -975,8 +992,11 @@ buffer, narrowed to the slide."
                              (max (if below window-min-height window-min-width)
                                   (round (* space (/ (car col) total))))
                              (if below 'below 'right)))))
-            (setq col-wins (append (org-slideboard--setup-column win base col i) col-wins)
-                  win next
+            (setq col-wins (append (org-slideboard--setup-column win base col i) col-wins))
+            ;; code and results one above the other
+            (when (and below next)
+              (org-slideboard--divider win))
+            (setq win next
                   cols (cdr cols)
                   i (1+ i)))))
       (org-slideboard--fit-text col-wins org-slideboard-column-text-scale))
@@ -1399,6 +1419,8 @@ The column heading's SLIDEBOARD_SRC property, if any, applies to it."
              (other (split-window win size dir)))
         (org-slideboard--setup-column-window win base (nth 0 inner) i)
         (org-slideboard--setup-column-window other base (nth 1 inner) i)
+        (when (eq dir 'below)
+          (org-slideboard--divider win))
         (list win other)))))
 
 (defvar org-slideboard-code-mode-map
