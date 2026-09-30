@@ -1,0 +1,397 @@
+#+TITLE: org-slideboard
+#+SUBTITLE: Org presentations inside Emacs, written for beamer
+#+AUTHOR: Vikas Rawal
+#+DATE: \today
+#+OPTIONS: toc:nil H:2 tags:nil num:nil
+#+LATEX_CLASS: beamer
+#+LATEX_HEADER: \setbeamersize{text margin left=5mm,text margin right=5mm}
+#+MACRO: pkg /org-slideboard/
+#+MACRO: hl @@latex:\textbf{\color{$1}$2}@@
+#+SLIDEBOARD_MACRO: hl *$2*
+#+SLIDEBOARD: footline:("%a" "%S" "%n / %N")
+
+# This file is a presentation about org-slideboard, shown with
+# org-slideboard.  Open it and run M-x org-slideboard-start-slideshow.
+# PgDn and PgUp move between slides; M-ESC q stops.  It also exports to
+# a beamer PDF with C-c C-e l P.
+
+* Getting started
+
+** What org-slideboard does                                           :slide:
+{{{pkg}}} shows an Org file as slides, inside Emacs.
+
++ It is made for files written for *beamer export*: the same file gives the
+  PDF and the show.
++ Beamer columns, equations, tables, macros and code blocks look much as they
+  do in the PDF.
++ The text stays live Org: you can edit it, and run code, during the show.
+
+This presentation is itself an Org file for {{{pkg}}}: every slide uses the
+feature it describes.
+
+** Starting, moving and stopping                                      :slide:
+| Key                                  | Does                             |
+|--------------------------------------+----------------------------------|
+| =M-x org-slideboard-start-slideshow= | start at the title page          |
+| =PgDn= / =PgUp=                      | next / previous slide            |
+| =C-c ;=                              | show the current slide again     |
+| =M-ESC g=                            | go to a slide by number          |
+| =M-ESC t=                            | table of contents                |
+| =M-ESC 0=                            | all text sizes back to the start |
+| =M-ESC q=                            | stop the show                    |
+
+These keys work in the windows of the slides only; everywhere else, your own
+keys keep working.
+
+** Slides are headings with a tag                                     :slide:
+A slide is a heading with the =:slide:= tag.  With =#+OPTIONS: H:2=, tag the
+level-2 headings; the level-1 headings above them become *section pages*.
+
+#+begin_example
+,* Getting started
+,** What org-slideboard does                                      :slide:
+#+end_example
+
++ =tags:nil= in =#+OPTIONS= keeps the tag out of the PDF.
++ Slides under a =COMMENT= heading are skipped, as in beamer export.  The next
+  slide in this file is commented out, so you will not see it.
+
+** COMMENT A slide you will not see                                   :slide:
+This slide is skipped, just as beamer skips it.
+
+** The file stays live                                                :slide:
+The windows of a slide show the presentation file itself, so what you type
+during the show goes straight into the file.
+
++ Fix a typo on the spot, add a point, run a code block.
++ After adding or removing slides, start the show again (or run
+  =M-x org-slideboard-initialize=) to rebuild the list of slides.
++ Starting and stopping a show do not change the file.
+
+* Layout
+
+** Beamer columns                                                     :slide:
+Text before the columns gets a frame of its own, across the slide.
+
+*** Left                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.45
+:END:
+Columns are children of the slide heading with a =BEAMER_col= property (or
+the =BMCOL= tag), exactly as for beamer.
+
+Each column is shown in its own window.
+
+*** Right                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.55
+:END:
++ Widths follow the =BEAMER_col= values.
++ A column without a width gets an equal share.
++ Images are scaled to their column.
++ Each column can be scrolled and resized on its own.
+
+** Titles, frames and pages                                           :slide:
+Every slide is laid out the same way:
+
++ a *title strip* at the top, with the heading of the slide;
++ below it, one or more *frames*: the body of the slide, the text before its
+  columns, each beamer column, code and results;
++ the *information strip* at the bottom.
+
+The title page comes from =#+TITLE=, =#+SUBTITLE=, =#+AUTHOR= and =#+DATE=,
+and each level-1 heading gets a section page, like the one you saw before
+this part.
+
+** The information strip                                              :slide:
+The line at the bottom of this slide is the information strip.  This file
+sets it with
+
+#+begin_example
+,#+SLIDEBOARD: footline:("%a" "%S" "%n / %N")
+#+end_example
+
+| Escape      | Shows                           |
+|-------------+---------------------------------|
+| =%t= / =%s= | title / subtitle                |
+| =%a= / =%d= | author / date                   |
+| =%S=        | section above the slide         |
+| =%h=        | heading of the slide            |
+| =%n= / =%N= | slide number / number of slides |
+
+Any other text is shown as it is.  =footline-position:top= moves the strip to
+the top, and =footline:nil= removes it.
+
+* Text
+
+** Text size                                                          :slide:
+Text is never shrunk to fit.  You choose the size during the show:
+
+| Keys                  | Change                                |
+|-----------------------+---------------------------------------|
+| ~C-=~ / ~C--~         | all frames of all slides              |
+| =C-c }= / =C-c {=     | the selected frame of this slide only |
+| ~C-x C-=~ / ~C-x C--~ | the selected frame, too               |
+| =M-ESC 0=             | everything back to the starting size  |
+
+A frame resized on its own keeps its size when you come back to the slide.
+Titles and the information strip keep theirs.  Try it: this slide has two
+frames below the title.
+
+*** Left                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+Select this column and press =C-c }= a few times.
+
+*** Right                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+This column keeps its size.
+
+** Lists                                                              :slide:
++ Bullets change with the depth of the item.
+  + Sub-items are indented, in the text font, so the indentation grows with
+    the text.
+    + And so on, for deeper levels.
++ A long item wraps under its own text, not under the bullet, so it stays
+  easy to read even when it runs over two or three lines of the slide.
+1. Numbered items keep their numbers.
+2. Like this.
+
+** Paragraphs are reflowed                                            :slide:
+This paragraph is written in the file with short,
+hard-wrapped lines,
+as Org files often are.
+On the slide it is joined into one paragraph
+that wraps to the width of the window,
+as LaTeX would do.
+
+A blank line still starts a new paragraph.
+
+** Clutter is hidden                                                  :slide:
+:PROPERTIES:
+:NOTE: property drawers are hidden
+:END:
+Beamer and babel lines that only matter for export are not shown: property
+drawers, =#+NAME:=, =#+CAPTION:= and =#+ATTR_...:= lines, stray LaTeX such as
+=\vspace=, and code blocks exported as results only.
+
+\vspace{2mm}
+#+NAME: tbl-hidden-keywords
+#+ATTR_LATEX: :align ll
+| Written in the file        | On the slide |
+|----------------------------+--------------|
+| =#+NAME:=, =#+ATTR_LATEX:= | hidden       |
+| =\vspace{2mm}=             | hidden       |
+| a =:PROPERTIES:= drawer    | hidden       |
+
+* Equations, macros and tables
+
+** Equations                                                          :slide:
+Inline math such as $e^{i\pi} + 1 = 0$ sits in the text, at the size of the
+text.  Display math starts on its own line:
+
+\[
+  \bar{x} = \frac{1}{n} \sum_{i=1}^{n} x_i
+\]
+
+\begin{align*}
+  (a + b)^2 &= a^2 + 2ab + b^2 \\
+  (a - b)^2 &= a^2 - 2ab + b^2
+\end{align*}
+
+Equations follow the text size, and beamer-only =#+LATEX_HEADER:= lines
+(this file has one) are kept out of the equation images.
+
+** Macros                                                             :slide:
+Org macros are shown expanded:
+
++ ={{{pkg}}}= shows as {{{pkg}}}.
++ ={{{date}}}= shows the date: {{{date}}}.
++ ={{{hl(red,important)}}}= is {{{hl(red,important)}}}.
+
+The last one is defined twice: for the PDF with =#+MACRO:=, as coloured LaTeX,
+and for the show with
+
+#+begin_example
+,#+SLIDEBOARD_MACRO: hl *$2*
+#+end_example
+
+so on a slide it is just bold text.
+
+** Tables                                                             :slide:
+A dummy table with a macro, an equation and numbers.  On the slide, the
+columns are aligned to what is shown, not to the text in the file:
+
+| Fruit                | Price |          Sold | Revenue |
+|----------------------+-------+---------------+---------|
+| {{{hl(red,Apples)}}} |  1.20 | $3 \times 40$ |  144.00 |
+| Bananas              |  0.50 |           200 |  100.00 |
+| Cherries             |  6.00 |            12 |   72.00 |
+
+Numbers stay right-aligned, as Org aligns them.
+
+* Code and results
+
+** Code and its results                                               :slide:
+A code block with =:exports both= is shown with its results: results above,
+code below, by default.
+
+#+begin_src emacs-lisp :exports both :results output
+(dolist (fruit '("apples" "bananas" "cherries"))
+  (princ (format "%-9s %d letters\n" fruit (length fruit))))
+#+end_src
+
+#+RESULTS:
+: apples    6 letters
+: bananas   7 letters
+: cherries  8 letters
+
+** Run the code during the show                                       :slide:
+Put the cursor in the code and press =C-c C-c=: the block runs, and the slide
+is shown again with the new results.
+
+#+begin_src emacs-lisp :exports both :results output
+(princ (format "This block last ran at %s" (format-time-string "%H:%M:%S")))
+#+end_src
+
+#+RESULTS:
+: This block last ran at 10:00:00
+
+Press =C-c C-c= in the code window and watch the time change.
+
+** Code on the left, results on the right                             :slide:
+:PROPERTIES:
+:SLIDEBOARD_SRC_SPLIT: lr
+:END:
+The property =SLIDEBOARD_SRC_SPLIT= arranges code and results: =bt= (the
+default), =tb=, =lr= or =rl=, naming where the code goes and then the results.
+
+#+begin_src emacs-lisp :exports both
+(let ((prices '(1.20 0.50 6.00))
+      (sold '(120 200 12)))
+  (cl-loop for p in prices
+           for s in sold
+           sum (* p s)))
+#+end_src
+
+#+RESULTS:
+: 316.0
+
+** Code in a column                                                   :slide:
+*** Explanation                                                       :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.4
+:END:
+A column that holds a code block is divided into code and results.
+
+This column is text only; the other one has
+=SLIDEBOARD_SRC: both= and =SLIDEBOARD_SRC_SPLIT: tb=, so its code is shown,
+above its results.
+
+*** Code                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.6
+:SLIDEBOARD_SRC: both
+:SLIDEBOARD_SRC_SPLIT: tb
+:END:
+#+begin_src emacs-lisp :exports results
+(mapconcat (lambda (n) (number-to-string (* n n)))
+           (number-sequence 1 10) " ")
+#+end_src
+
+#+RESULTS:
+: 1 4 9 16 25 36 49 64 81 100
+
+** Results only, with a plot                                          :slide:
+:PROPERTIES:
+:SLIDEBOARD_SRC: results
+:END:
+With =SLIDEBOARD_SRC: results= only the result of a block is shown: here a
+small bar chart, made by the code block as an SVG file and scaled to the
+window.  (The block is =:exports none=, so the beamer PDF leaves the SVG out:
+pdflatex cannot include SVG files.)
+
+#+begin_src emacs-lisp :exports none :results file :file demo-plot.svg
+(let* ((data '(("Apples" . 144) ("Bananas" . 100) ("Cherries" . 72)))
+       (w 480) (h 240) (bar 100) (gap 50) (x gap))
+  (concat
+   (format "<svg xmlns='http://www.w3.org/2000/svg' width='%d' height='%d'>" w h)
+   "<rect width='100%' height='100%' fill='white'/>"
+   (mapconcat
+    (lambda (d)
+      (let* ((bh (round (* 1.2 (cdr d))))
+             (s (format (concat "<rect x='%d' y='%d' width='%d' height='%d' fill='#4a78b5'/>"
+                                "<text x='%d' y='%d' font-size='16' text-anchor='middle'>%s</text>")
+                        x (- h 30 bh) bar bh (+ x (/ bar 2)) (- h 10) (car d))))
+        (setq x (+ x bar gap))
+        s))
+    data "")
+   "</svg>"))
+#+end_src
+
+#+RESULTS:
+[[file:demo-plot.svg]]
+
+** Editing with a REPL                                                :slide:
+:PROPERTIES:
+:SLIDEBOARD_SRC_SPLIT: lr
+:END:
+Put the cursor in the code and press =C-c '=: the code opens in its own
+editing buffer, next to a running REPL (Python here, R through ESS), where
+you can try it out line by line.  =C-c '= again brings the slide back.
+
+#+begin_src python :exports both :results output
+fruits = {"apples": 144, "bananas": 100, "cherries": 72}
+for name, revenue in fruits.items():
+    print(f"{name:9} {revenue:6.2f}")
+#+end_src
+
+#+RESULTS:
+: apples    144.00
+: bananas   100.00
+: cherries   72.00
+
+* Settings
+
+** Settings for one presentation                                      :slide:
+Most settings can be given in the file itself, on =#+SLIDEBOARD:= lines:
+
+#+begin_example
+,#+SLIDEBOARD: text-scale:3 title-scale:2 footline:nil
+,#+SLIDEBOARD: src:both src-split:lr variable-pitch:nil
+#+end_example
+
+| Key                           | Sets                                      |
+|-------------------------------+-------------------------------------------|
+| =text-scale=                  | text size of the frames                   |
+| =src=                         | show code: =exports=, =results= or =both= |
+| =src-split=                   | =bt=, =tb=, =lr= or =rl=                  |
+| =footline=                    | the information strip                     |
+| =title-page=, =section-pages= | the title and section pages               |
+
+For one slide or a whole section, use the properties =SLIDEBOARD_SRC= and
+=SLIDEBOARD_SRC_SPLIT=.  All settings are in =M-x customize-group RET
+org-slideboard=.
+
+** Changing the keys                                                  :slide:
+The keys of the show are in =org-slideboard-keys-mode-map=, and can be
+changed like any Emacs keys:
+
+#+begin_src emacs-lisp :eval never
+(with-eval-after-load 'org-slideboard
+  (define-key org-slideboard-keys-mode-map [f6] #'org-slideboard-execute-slide)
+  (define-key org-slideboard-keys-mode-map (kbd "C-=") nil))
+#+end_src
+
+A key set to =nil= gives the key back to you.  Function keys are left free for
+you to use.
+
+** That's it                                                          :slide:
++ Installation and all settings: the =README.org= in the repository.
++ This file is a template: copy it, replace the slides with yours, and keep
+  the header lines you need.
+
+Press =M-ESC q= to stop the show.

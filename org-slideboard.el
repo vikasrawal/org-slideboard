@@ -636,6 +636,8 @@ they were last shown are read again."
                                                      :max-width max-w
                                                      :max-height max-h))
               (overlay-put ov 'priority 1000)
+              ;; the link's underline would be drawn across the image
+              (overlay-put ov 'face '(:underline nil :inherit default))
               ;; Org hides the link brackets with an `invisible' text
               ;; property, and a display spec on invisible text is not
               ;; shown.  A non-nil overlay value that is not in the
