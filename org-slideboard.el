@@ -42,8 +42,8 @@
 ;; - text fitted to the window, paragraphs reflowed, and lists, tables
 ;;   and LaTeX equations laid out for the slide;
 ;; - Org macros expanded, with optional definitions for the show;
-;; - source blocks shown as code, results, or both side by side (or top
-;;   and bottom), with C-c C-c updating the results and the block's
+;; - source blocks shown as code, results, or both, one above the other
+;;   or side by side, with C-c C-c updating the results and the block's
 ;;   editor shown next to a running R or Python REPL;
 ;; - beamer and babel clutter hidden.
 ;;
@@ -244,16 +244,17 @@ overlays, so the file is not changed."
 (defcustom org-slideboard-src-display 'exports
   "How source blocks with results are shown on the slides.
 - `exports': follow each block's :exports header: code shows the
-  code, results the results, both the code and the results side by
-  side, and none nothing.
+  code, results the results, both the code and the results
+  together, and none nothing.
 - `results': show only the results of every block.
-- `both': show the code and the results of every block side by side.
+- `both': show the code and the results of every block together.
 
 It can be set for one file with #+SLIDEBOARD: src:both, and for one
 slide (or a section of slides) with the property SLIDEBOARD_SRC.  With
-both, the first such block of a slide is shown in two windows, the
-code on the left and the results on the right; see
-`org-slideboard-execute-src-block' and `org-slideboard-src-repl-functions'."
+both, the first such block of a slide is shown in two windows, by
+default the results above the code, see `org-slideboard-src-split',
+`org-slideboard-execute-src-block' and
+`org-slideboard-src-repl-functions'."
   :type '(choice (const :tag "Follow :exports" exports)
                  (const :tag "Results only" results)
                  (const :tag "Code and results" both))
@@ -266,14 +267,14 @@ height when the code is above the results, see `org-slideboard-src-split'."
   :type 'number
   :group 'org-slideboard)
 
-(defcustom org-slideboard-src-split 'lr
+(defcustom org-slideboard-src-split 'bt
   "Where the code and the results go when both are shown.
 The value names where the code goes, then the results:
 
   lr  code on the left, results on the right
   rl  code on the right, results on the left
   tb  code at the top, results at the bottom
-  bt  code at the bottom, results at the top
+  bt  code at the bottom, results at the top (the default)
 
 as with rankdir in Graphviz.  It can be set for one file with
 #+SLIDEBOARD: src-split:tb, and for one slide or beamer column (or a

@@ -75,7 +75,7 @@ org-slideboard offers:
 - *Macros expanded*: ={{{macro(...)}}}= is shown as its expansion, and a
   macro can be given its own definition for the show.
 - *Code and results*: a slide can show only the results of a source block,
-  or the code and its results side by side; =C-c C-c= updates the results,
+  or the results above its code (or beside it); =C-c C-c= updates the results,
   and editing the block shows it next to a running R or Python REPL.
 - *Title page and section pages*: generated (and animated) from =#+TITLE=,
   =#+AUTHOR=, =#+DATE= and from the headings above the slides.
@@ -190,7 +190,7 @@ These are active while =org-slideboard-mode= is on (it is turned on by
 
 The keys work from any window, including a column window.
 
-On a slide with code and results side by side (see [[*Code and results][Code and results]]),
+On a slide with code and results (see [[*Code and results][Code and results]]),
 these work in the code window:
 
 | Key       | Command                                                                       |
@@ -359,13 +359,13 @@ Only the display changes; the file is not.  To keep Org's own layout, set
 
 ** Code and results
 A slide with a source block can show only the block's results, only its
-code, or both side by side.  This is set by =org-slideboard-src-display=:
+code, or both.  This is set by =org-slideboard-src-display=:
 
-| Value     | Shows                                                                                               |
-|-----------+-----------------------------------------------------------------------------------------------------|
-| =exports= | what each block's =:exports= says (the default): =code=, =results=, =both= (side by side) or =none= |
-| =results= | only the results of every block                                                                     |
-| =both=    | the code and the results of every block, side by side                                               |
+| Value     | Shows                                                                                |
+|-----------+--------------------------------------------------------------------------------------|
+| =exports= | what each block's =:exports= says (the default): =code=, =results=, =both= or =none= |
+| =results= | only the results of every block                                                      |
+| =both=    | the code and the results of every block                                              |
 
 It can be set for the whole presentation, for one file or for one slide (or
 all slides of a section, since the property is inherited):
@@ -397,7 +397,8 @@ text after them, in two windows.  They are arranged by
 | =bt=  | bottom | top     |
 
 The value names where the code goes and then where the results go, like
-=rankdir= in Graphviz (=LR=, =TB=).  =lr= is the default.
+=rankdir= in Graphviz (=LR=, =TB=).  =bt=, the results above the code,
+is the default.
 
 It can be set for the whole presentation, for one file, and for one slide
 or section with the property =SLIDEBOARD_SRC_SPLIT=:
@@ -691,7 +692,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-align-tables=              | t                                              | align tables to what is displayed                                  |
 | =org-slideboard-src-display=               | =exports=                                      | show code, results or both, see [[*Code and results][Code and results]]                   |
 | =org-slideboard-src-code-width=            | 0.5                                            | share of the width (or height) for the code, with code and results |
-| =org-slideboard-src-split=                 | =lr=                                           | where code and results go: =lr=, =rl=, =tb= or =bt=                |
+| =org-slideboard-src-split=                 | =bt=                                           | where code and results go: =lr=, =rl=, =tb= or =bt=                |
 | =org-slideboard-src-repl-functions=        | R and python                                   | REPLs for editing blocks during the show                           |
 | =org-slideboard-title-page=                | t                                              | show a title page                                                  |
 | =org-slideboard-section-pages=             | t                                              | show section pages                                                 |
