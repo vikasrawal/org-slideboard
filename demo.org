@@ -8,6 +8,7 @@
 #+MACRO: pkg /org-slideboard/
 #+MACRO: hl @@latex:\textbf{\color{$1}$2}@@
 #+SLIDEBOARD_MACRO: hl *$2*
+#+MACRO: alert @@latex:\alert{$1}@@@@slideboard:*$1*@@
 #+SLIDEBOARD: footline:("%a" "%S" "%n / %N")
 
 # This file is a presentation about org-slideboard, shown with
@@ -37,6 +38,7 @@ feature it describes.
 | Key                                  | Does                                   |
 |--------------------------------------+----------------------------------------|
 | =M-x org-slideboard-start-slideshow= | start at the title page                |
+| =M-x org-slideboard-open-slide=      | start at the slide where the cursor is |
 | =PgDn= / =PgUp=                      | next / previous slide                  |
 | =C-c ;=                              | show the current slide again           |
 | =M-ESC g=                            | go to a slide by number                |
@@ -45,7 +47,9 @@ feature it describes.
 | =M-ESC q=                            | stop the show                          |
 
 These keys work in the windows of the slides only; everywhere else, your own
-keys keep working.
+keys keep working.  In the table of contents, click a slide to go to it, or
+press =q= to close it.  During the show, the same commands are in the
+/org-slideboard/ menu.
 
 ** Slides are headings with a tag                                     :slide:
 A slide is a heading with the =:slide:= tag.  With =#+OPTIONS: H:2=, tag the
@@ -59,6 +63,12 @@ level-2 headings; the level-1 headings above them become *section pages*.
 + =tags:nil= in =#+OPTIONS= keeps the tag out of the PDF.
 + Slides under a =COMMENT= heading are skipped, as in beamer export.  The next
   slide in this file is commented out, so you will not see it.
++ To tag all level-2 headings of a file at once, evaluate this in the file's buffer:
+
+  #+begin_example
+   (org-map-entries (lambda () (org-toggle-tag "slide" 'on)) "LEVEL=2")
+  #+end_example
+
 
 ** COMMENT A slide you will not see                                   :slide:
 This slide is skipped, just as beamer skips it.
@@ -107,6 +117,12 @@ The title page comes from =#+TITLE=, =#+SUBTITLE=, =#+AUTHOR= and =#+DATE=,
 and each level-1 heading gets a section page, like the one you saw before
 this part.
 
++ LaTeX in these keywords is tidied: =\\= starts a new line, =\and= becomes
+  a comma, =\today= becomes the date (as on the title page of this file).
++ The pages are animated in; any key skips the animation.
+  =#+SLIDEBOARD: animate:nil= turns it off, =page-scale:= sets their text
+  size, and =title-page:nil= or =section-pages:nil= leaves them out.
+
 ** The information strip                                              :slide:
 The line at the bottom of this slide is the information strip.  This file
 sets it with
@@ -123,8 +139,10 @@ sets it with
 | =%h=        | heading of the slide            |
 | =%n= / =%N= | slide number / number of slides |
 
-Any other text is shown as it is.  =footline-position:top= moves the strip to
-the top, and =footline:nil= removes it.
+Any other text is shown as it is, and =%%= is a =%=.
+=footline-position:top= moves the strip to the top, and =footline:nil=
+removes it.  In your configuration, =org-slideboard-footline= can also hold
+functions, e.g. one that shows the time.
 
 * Text
 
@@ -153,6 +171,28 @@ Select this column and press =C-c }= a few times.
 :BEAMER_col: 0.5
 :END:
 This column keeps its size.
+
+** Resizing frames                                                    :slide:
+Frames start at their =BEAMER_col= widths, and code and results at
+=code-width= (0.5).  When that does not suit the content, change it:
+
+*** Left                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.3
+:END:
++ Drag the divider between this column and the next.
++ Or, in a frame, press =C-x }= / =C-x {= for wider / narrower, and =C-x ^=
+  for taller.
+
+*** Right                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.7
+:END:
+The slide is shown again with the new sizes, so images are scaled to their
+new windows, and it keeps them when you come back.
+
+=C-x C-0= puts the text of a frame back to the common size; =M-ESC 0= puts
+every frame of every slide back to where the show started.
 
 ** Lists                                                              :slide:
 + Bullets change with the depth of the item.
@@ -191,6 +231,76 @@ drawers, =#+NAME:=, =#+CAPTION:= and =#+ATTR_...:= lines, stray LaTeX such as
 | =\vspace{2mm}=             | hidden       |
 | a =:PROPERTIES:= drawer    | hidden       |
 
+=#+SLIDEBOARD: clutter:nil= shows all of it again.
+
+* Look and feel
+
+** Beautification during the show                                     :slide:
+While the show runs, the slides are made to look like slides; when it stops,
+the file looks as it did before.
+
+| Key              | Default | Does                                    |
+|------------------+---------+-----------------------------------------|
+| =variable-pitch= | =t=     | proportional (variable-width) text      |
+| =modern=         | =t=     | styled headings from org-modern         |
+| =emphasis=       | =t=     | =*bold*= shown without the asterisks    |
+| =macro-markers=  | =t=     | braces of unexpanded macros hidden      |
+
+Turned off during the show: =org-indent-mode= and line numbers (=disable:=).
+
+To try fixed-width text, add =variable-pitch:nil= to this file's
+=#+SLIDEBOARD:= line and start the show again.  The setting applies to the
+whole presentation.  In variable-width text, code blocks can lose their
+alignment; tables are re-aligned.
+
+** Bullets and indentation                                            :slide:
++ Bullets come from =bullets:=, one per level of depth:
+  + the default is =("●" "○" "■" "□")=;
+    + =bullets:("➤" "–" "•")= gives arrows and dashes;
+    + =bullets:nil= keeps the bullets of the file (or org-modern's).
++ =list-indent:6= indents each level by six spaces instead of four.
++ =hanging:nil= stops wrapped lines from starting under the text of their
+  item, so they start at the left margin instead.
+
+** Images                                                             :slide:
+*** Image                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+#+begin_src emacs-lisp :exports none :eval never :results file
+;; the plot is made on the slide "Results only, with a plot"
+#+end_src
+
+#+RESULTS:
+[[file:demo-plot.svg]]
+
+*** Text                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+An image is scaled down to fit its window.  Two settings limit its size, as
+fractions of the window:
+
+| Key             | Default | Limits         |
+|-----------------+---------+----------------|
+| =image-width=   |     0.8 | width          |
+| =image-height=  |     0.8 | height         |
+
+To make images smaller, say at most half the width and 60% of the height
+of their windows, add to the top of the file:
+
+#+begin_example
+,#+SLIDEBOARD: image-width:0.5 image-height:0.6
+#+end_example
+
+and start the show again.  Use 1.0 to let images fill their windows.  The
+setting applies to all slides; to set it for every presentation, set
+=org-slideboard-image-width-fraction= and
+=org-slideboard-image-height-fraction= in your configuration.
+
+An image file that has changed, e.g. a plot rewritten by a code block, is
+read again when the slide is shown again.
+
 * Equations, macros and tables
 
 ** Equations                                                          :slide:
@@ -209,6 +319,24 @@ text.  Display math starts on its own line:
 Equations follow the text size, and beamer-only =#+LATEX_HEADER:= lines
 (this file has one) are kept out of the equation images.
 
+** Size and placement of equations                                    :slide:
+Equations are drawn at =latex-size:= (0.8) times the size of the text, and
+rendered at =latex-scale:= (4.0) so that they stay sharp.
+
+\begin{equation}
+  y_t = \alpha + \beta x_t + \varepsilon_t
+\end{equation}
+
+A numbered equation is as wide as a LaTeX page, since the number sits at the
+right margin, so it may be shrunk to fit.  Without a number it is not:
+
+\begin{equation*}
+  y_t = \alpha + \beta x_t + \varepsilon_t
+\end{equation*}
+
+Display equations start at the left margin; =center-math:t= centres them, as
+LaTeX does.  For example: =#+SLIDEBOARD: latex-size:1.0 center-math:t=.
+
 ** Macros                                                             :slide:
 Org macros are shown expanded:
 
@@ -225,6 +353,24 @@ and for the show with
 
 so on a slide it is just bold text.
 
+** More ways to define macros for the show                            :slide:
+A =@@slideboard:...@@= snippet keeps the show version on the =#+MACRO:= line
+itself.  This file has
+
+#+begin_example
+,#+MACRO: alert @@latex:\alert{$1}@@@@slideboard:*$1*@@
+#+end_example
+
+so ={{{alert(look here)}}}= is {{{alert(look here)}}}: red in the PDF, bold
+on the slide.
+
++ In your configuration, =org-slideboard-macro-templates= can define a macro
+  for every presentation, as a template or a function returning text with
+  faces.
++ Macros that evaluate Lisp are never expanded, so starting a show never runs
+  code from the file.
++ =#+SLIDEBOARD: macros:nil= turns expansion off.
+
 ** Tables                                                             :slide:
 A dummy table with a macro, an equation and numbers.  On the slide, the
 columns are aligned to what is shown, not to the text in the file:
@@ -236,6 +382,7 @@ columns are aligned to what is shown, not to the text in the file:
 | Cherries             |  6.00 |            12 |   72.00 |
 
 Numbers stay right-aligned, as Org aligns them.
+=#+SLIDEBOARD: align-tables:nil= keeps Org's own alignment.
 
 * Code and results
 
@@ -360,6 +507,17 @@ for name, revenue in fruits.items():
 : bananas   100.00
 : cherries   72.00
 
+** Sessions and other languages                                       :slide:
++ A block with a =:session= header uses that session for its REPL, in any
+  language.
++ Without one, R gets an ESS process and Python =run-python=; both are
+  started if they are not running, and keep running after the show.
++ Other languages can be added to =org-slideboard-src-repl-functions=, with a
+  function that returns the REPL buffer (the README has one for Julia).
++ Blocks with =:exports none= are never shown, whatever =src:= says.
++ =code-width:= (0.5) is the code's share of the slide, beside or above its
+  results.
+
 * Settings
 
 ** Settings for one presentation                                      :slide:
@@ -370,17 +528,75 @@ Most settings can be given in the file itself, on =#+SLIDEBOARD:= lines:
 ,#+SLIDEBOARD: src:both src-split:lr variable-pitch:nil
 #+end_example
 
-| Key                           | Sets                                      |
-|-------------------------------+-------------------------------------------|
-| =text-scale=                  | text size of the frames                   |
-| =src=                         | show code: =exports=, =results= or =both= |
-| =src-split=                   | =bt=, =tb=, =lr= or =rl=                  |
-| =footline=                    | the information strip                     |
-| =title-page=, =section-pages= | the title and section pages               |
+The syntax is that of =#+OPTIONS=: =key:value= pairs, with values written as
+Lisp (=t=, =nil=, numbers, ="strings"=, lists).  The lines are read when the
+show starts, and the previous values come back when it stops.  Beamer
+ignores them.  Unknown keys and bad values are skipped with a message.
 
-For one slide or a whole section, use the properties =SLIDEBOARD_SRC= and
-=SLIDEBOARD_SRC_SPLIT=.  All settings are in =M-x customize-group RET
-org-slideboard=.
+The next slide lists all the keys.
+
+** All the keys of =#+SLIDEBOARD:=                                    :slide:
+*** Left                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+| Topic           | Keys                                                    |
+|-----------------+---------------------------------------------------------|
+| look and feel   | =modern=, =variable-pitch=, =emphasis=, =macro-markers= |
+| modes           | =modes=, =disable=                                      |
+| lists           | =bullets=, =list-indent=, =hanging=                     |
+| sizes           | =text-scale=, =title-scale=, =page-scale=               |
+| pages           | =title-page=, =section-pages=, =animate=                |
+| images          | =image-width=, =image-height=                           |
+
+*** Right                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+| Topic           | Keys                                       |
+|-----------------+--------------------------------------------|
+| equations       | =latex-size=, =latex-scale=, =center-math= |
+| macros, tables  | =macros=, =align-tables=                   |
+| code            | =src=, =src-split=, =code-width=           |
+| hidden clutter  | =clutter=                                  |
+| information     | =footline=, =footline-position=            |
+
+Each key sets an =org-slideboard-...= variable; the README has the table.
+
+** Settings for one slide or section                                  :slide:
+:PROPERTIES:
+:SLIDEBOARD_SRC: results
+:END:
+Two settings can also be given as heading properties:
+
+| Property               | Values                         |
+|------------------------+--------------------------------|
+| =SLIDEBOARD_SRC=       | =exports=, =results= or =both= |
+| =SLIDEBOARD_SRC_SPLIT= | =bt=, =tb=, =lr= or =rl=       |
+
+Properties are inherited: set on a level-1 heading, they apply to every
+slide of that section; set on a beamer column, to that column only.  This
+slide sets =SLIDEBOARD_SRC: results= in its hidden drawer, so the block
+below shows only its result:
+
+#+begin_src emacs-lisp :exports both
+(format "6 times 7 is %d" (* 6 7))
+#+end_src
+
+#+RESULTS:
+: 6 times 7 is 42
+
+** Other ways to give settings                                        :slide:
++ *Globally*, in your configuration: =M-x customize-group RET
+  org-slideboard=.
++ *File-local variables*, in the usual Emacs block at the end of the file,
+  e.g. =org-slideboard-text-scale: 3=.  These are read when the file is
+  opened (=M-x revert-buffer= after a change).
++ *Precedence*: =#+SLIDEBOARD:= beats a file-local variable, which beats the
+  global value.
++ *Faces*: bullets, the information strip, the divider between code and
+  results and the title and section pages have their own faces, for
+  =M-x customize-face= (=org-slideboard-bullet=, =org-slideboard-footline=, ...).
 
 ** Changing the keys                                                  :slide:
 The keys of the show are in =org-slideboard-keys-mode-map=, and can be
@@ -393,7 +609,9 @@ changed like any Emacs keys:
 #+end_src
 
 A key set to =nil= gives the key back to you.  Function keys are left free for
-you to use.
+you to use.  The keys of the code window (=C-c C-c=, =C-c '=) are in
+=org-slideboard-code-mode-map=.  To keep Emacs's zoom keys as plain zoom, set
+=org-slideboard-zoom-resizes-frame= to =nil=.
 
 ** That's it                                                          :slide:
 + Installation and all settings: the =README.org= in the repository.
