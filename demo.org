@@ -1,5 +1,5 @@
 #+TITLE: org-slideboard
-#+SUBTITLE: Org presentations inside Emacs, written for beamer
+#+SUBTITLE: Live presentations inside Emacs
 #+AUTHOR: Vikas Rawal
 #+DATE: \today
 #+OPTIONS: toc:nil H:2 tags:nil num:nil
@@ -18,13 +18,17 @@
 * Getting started
 
 ** What org-slideboard does                                           :slide:
-{{{pkg}}} shows an Org file as slides, inside Emacs.
+{{{pkg}}} turns an org file into a presentation, which is run inside
+Emacs and the content of which can be modified during the
+presentation.
 
-+ It is made for files written for *beamer export*: the same file gives the
-  PDF and the show.
-+ Beamer columns, equations, tables, macros and code blocks look much as they
-  do in the PDF.
-+ The text stays live Org: you can edit it, and run code, during the show.
++ It is made for files written for *beamer export*: the same file can
+  be used for producing a beamer PDF and for direct presentation from
+  within emacs.
++ Beamer columns, equations, tables, macros and code blocks are
+  rendered automatically.
++ The text stays live Org: you can modify content, add/delete content,
+  and run code, during the presentation.
 
 This presentation is itself an Org file for {{{pkg}}}: every slide uses the
 feature it describes.

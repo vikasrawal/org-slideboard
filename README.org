@@ -5,7 +5,7 @@ org-slideboard shows an Org file as slides inside Emacs.  It is made for
 files written for beamer export: beamer columns, equations, tables, macros
 and code blocks are shown much as they would be in the PDF, while the text
 stays live Org that can be edited, and code that can be run, during the
-show.
+presentation.
 
 For a tour, open [[file:demo.org][demo.org]] and run =M-x org-slideboard-start-slideshow=: it is a
 presentation about org-slideboard, in which each slide uses the feature it
