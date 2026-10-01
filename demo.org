@@ -20,7 +20,7 @@
 
 ** What org-slideboard does                                           :slide:
 {{{pkg}}} turns an org file into a presentation, which is run inside
-Emacs and the content of which can be modified during the
+Emacs, but with the possibility of modifying its content during the
 presentation.
 
 + It is made for files written for *beamer export*: the same file can
@@ -31,8 +31,12 @@ presentation.
 + The text stays live Org: you can modify content, add/delete content,
   and run code, during the presentation.
 
-This presentation is itself an Org file for {{{pkg}}}: every slide uses the
-feature it describes.
+This makes the presentation a powerful tool for pedagogical purposes
+as the instructor can also use the presentation as a whiteboard as
+well as demonstrate the results of executing some code.
+
+This presentation is itself an Org file for {{{pkg}}}: every slide
+uses the feature it describes.
 
 ** Starting, moving and stopping                                      :slide:
 | Key                                  | Does                                   |
