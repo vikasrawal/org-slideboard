@@ -1,9 +1,9 @@
-;;; org-slideboard.el --- Present Org files as slides with columns and code -*- lexical-binding: t; -*-
+1;;; org-slideboard.el --- Present Org files as slides with columns and code -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2014 John Kitchin
 ;; Copyright (C) 2026 Vikas Rawal
 
-;; Author: Vikas Rawal <vikasrawal@gmail.com>
+;; Author: Vikas Rawal <vikasrawal@XKgmail.com>
 ;; Assisted-by: Claude Code:claude-opus-5-5
 ;; Maintainer: Vikas Rawal <vikasrawal@gmail.com>
 ;; Version: 0.1.0

@@ -7,9 +7,10 @@ and code blocks are shown much as they would be in the PDF, while the text
 stays live Org that can be edited, and code that can be run, during the
 presentation.
 
-For a tour, open [[file:demo.org][demo.org]] and run =M-x org-slideboard-start-slideshow=: it is a
-presentation about org-slideboard, in which each slide uses the feature it
-describes.  It also serves as a template for your own presentations.
+For a tour, open [[file:demo.org][demo.org]] and run =M-x org-slideboard-start-slideshow=
+to see a presentation about org-slideboard, in which each slide uses
+the feature it describes.  It also serves as a template for your own
+presentations.
 
 * Installation
 org-slideboard is not yet on MELPA, so install it from this repository.
