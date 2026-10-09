@@ -625,6 +625,30 @@ julia-repl package:
 Line breaks inside a paragraph are displayed as spaces, so hard-wrapped
 source text is rewrapped to the column width.  The file is not changed.
 
+** Margins
+By default the text runs from one edge of the frame to the other.
+=org-slideboard-margins= leaves blank space at the left and right of the
+slides: a fraction of the frame width for both sides, or a list
+=(LEFT RIGHT)= of two fractions.  Only the outer edges get a margin, not
+the space between frames side by side.  The title and the frames are
+indented, and images are scaled to fit inside the margins; the
+information strip and the title and section pages are not changed.
+
+#+begin_src emacs-lisp
+(setq org-slideboard-margins 0.08)          ; 8% on each side
+(setq org-slideboard-margins '(0.1 0.05))   ; 10% left, 5% right
+#+end_src
+
+For one presentation, use =#+SLIDEBOARD: margins:0.08=.  For one slide,
+or all the slides of a section, use the property =SLIDEBOARD_MARGINS=:
+
+#+begin_example
+,** A quote                                                         :slide:
+:PROPERTIES:
+:SLIDEBOARD_MARGINS: (0.2 0.2)
+:END:
+#+end_example
+
 ** Lists
 Lists are laid out with overlays, so the file is not changed:
 
@@ -767,6 +791,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =src=               | =org-slideboard-src-display=                          | =exports= / =results= / =both=        |
 | =code-width=        | =org-slideboard-src-code-width=                       | number                                |
 | =src-split=         | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=             |
+| =margins=           | =org-slideboard-margins=                              | number, =(LEFT RIGHT)=, or =nil=      |
 | =bullets=           | =org-slideboard-list-bullets=                         | list of strings, or =nil=             |
 | =list-indent=       | =org-slideboard-list-indent=                          | number                                |
 | =hanging=           | =org-slideboard-hanging-indent=                       | =t= / =nil=                           |

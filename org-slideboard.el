@@ -191,6 +191,25 @@ part of the width or height it shares with its neighbours.")
   :type 'number
   :group 'org-slideboard)
 
+(defcustom org-slideboard-margins nil
+  "Blank space at the left and right of the slides.
+A fraction of the width of the Emacs frame, for both sides, or a list
+\(LEFT RIGHT) of two fractions.  nil or 0 means none.  Only the outer
+edges of a slide get a margin, not the space between frames side by
+side; the title and the frames are indented, but not the information
+strip or the title and section pages.
+
+It can be set for one file with #+SLIDEBOARD: margins:0.08 or
+margins:(0.1 0.05), and for one slide (or a section of slides) with
+the property SLIDEBOARD_MARGINS."
+  :type '(choice (const :tag "None" nil)
+                 (number :tag "Both sides")
+                 (list :tag "Left and right" number number))
+  :group 'org-slideboard)
+
+(defvar org-slideboard--slide-margins nil
+  "The margins of the slide being shown, see `org-slideboard-margins'.")
+
 (defcustom org-slideboard-hide-clutter t
   "If non-nil, hide beamer and babel clutter during the show.
 That is drawers, keyword lines, source blocks shown only as results
@@ -1003,9 +1022,22 @@ WIN's hidden mode line is shown again, as an empty line in that face."
       (push (list face 'org-slideboard-divider) face-remapping-alist))
     (force-mode-line-update)))
 
+(defun org-slideboard--apply-margins (win)
+  "Give window WIN the margins of the slide on the outer edges it touches.
+See `org-slideboard-margins'.  The windows must be laid out already."
+  (let* ((m org-slideboard--slide-margins)
+         (left (cond ((numberp m) m) ((consp m) (nth 0 m)) (t 0)))
+         (right (cond ((numberp m) m) ((consp m) (nth 1 m)) (t 0)))
+         (cols (lambda (frac side)
+                 (and (window-at-side-p win side)
+                      (> frac 0)
+                      (round (* frac (frame-width (window-frame win))))))))
+    (set-window-margins win (funcall cols left 'left) (funcall cols right 'right))))
+
 (defun org-slideboard--setup-column-window (win base col i)
   "Show column COL of buffer BASE in window WIN.
 I is the column index, used to name the indirect buffer."
+  (org-slideboard--apply-margins win)
   (let ((buf (make-indirect-buffer
               base (generate-new-buffer-name (format "*org-slideboard-col-%d*" i)) t)))
     (push buf org-slideboard--column-buffers)
@@ -1209,6 +1241,7 @@ must be the base buffer, narrowed to the slide."
     (let* ((win (split-window title-win nil 'below))
            (col-wins '())
            (i 1))
+      (org-slideboard--apply-margins title-win)
       (fit-window-to-buffer title-win (floor (window-total-height (frame-root-window)) 3) 1)
       (when intro
         (let ((rest (split-window win nil 'below)))
@@ -1266,7 +1299,9 @@ must be the base buffer, narrowed to the slide."
   (setq org-slideboard--windows '())
   (dolist (buf org-slideboard--column-buffers)
     (when (buffer-live-p buf) (kill-buffer buf)))
-  (setq org-slideboard--column-buffers '()))
+  (setq org-slideboard--column-buffers '())
+  (dolist (win (window-list))
+    (set-window-margins win nil nil)))
 
 ;;** Per-file settings
 
@@ -1306,6 +1341,15 @@ Parts that are functions can only be set in the configuration."
   "Return non-nil if VALUE is a valid `org-slideboard-src-split'."
   (memq value '(lr rl tb bt)))
 
+(defun org-slideboard--margins-p (value)
+  "Return non-nil if VALUE is a valid `org-slideboard-margins'."
+  (let ((fraction-p (lambda (v) (and (numberp v) (<= 0 v 0.45)))))
+    (or (null value)
+        (funcall fraction-p value)
+        (and (consp value) (= (length value) 2)
+             (seq-every-p fraction-p value)))))
+(put 'org-slideboard-margins 'safe-local-variable #'org-slideboard--margins-p)
+
 (defun org-slideboard--src-display-p (value)
   "Return non-nil if VALUE is a valid `org-slideboard-src-display'."
   (memq value '(exports results both)))
@@ -1334,6 +1378,7 @@ Parts that are functions can only be set in the configuration."
     ("align-tables" org-slideboard-align-tables booleanp)
     ("src" org-slideboard-src-display org-slideboard--src-display-p)
     ("code-width" org-slideboard-src-code-width numberp)
+    ("margins" org-slideboard-margins org-slideboard--margins-p)
     ("src-split" org-slideboard-src-split org-slideboard--src-split-p)
     ("bullets" org-slideboard-list-bullets org-slideboard--string-list-p)
     ("list-indent" org-slideboard-list-indent natnump)
@@ -1652,6 +1697,14 @@ not valid, see `org-slideboard-src-display'."
   (let* ((v (org-with-wide-buffer (org-entry-get pos "SLIDEBOARD_SRC" t)))
          (sym (and v (intern (downcase (string-trim v))))))
     (and (org-slideboard--src-display-p sym) sym)))
+
+(defun org-slideboard--margins-setting (pos)
+  "Return the SLIDEBOARD_MARGINS property at heading POS, or above it.
+The value is read as Lisp, and nil is returned if there is none or it
+is not valid, see `org-slideboard-margins'."
+  (let* ((v (org-with-wide-buffer (org-entry-get pos "SLIDEBOARD_MARGINS" t)))
+         (value (and v (condition-case nil (car (read-from-string v)) (error nil)))))
+    (and value (org-slideboard--margins-p value) value)))
 
 (defun org-slideboard--frame-share (type pos)
   "Return the remembered share of the frame of TYPE whose text starts at POS."
@@ -2258,6 +2311,8 @@ On a title or section page, show that page again."
     ;; blocks are not folded: code that is not wanted is hidden instead,
     ;; see `org-slideboard-src-display'
     (setq org-slideboard--slide-src (org-slideboard--src-setting (point)))
+    (setq org-slideboard--slide-margins (or (org-slideboard--margins-setting (point))
+                                            org-slideboard-margins))
     (let ((src (and (not cols) (org-slideboard--slide-src-split))))
       (when src
         (let ((split (org-slideboard--src-split-direction (point-min))))
