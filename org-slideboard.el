@@ -1031,8 +1031,12 @@ See `org-slideboard-margins'.  The windows must be laid out already."
          (cols (lambda (frac side)
                  (and (window-at-side-p win side)
                       (> frac 0)
-                      (round (* frac (frame-width (window-frame win))))))))
-    (set-window-margins win (funcall cols left 'left) (funcall cols right 'right))))
+                      (round (* frac (frame-width (window-frame win)))))))
+         (left-cols (funcall cols left 'left))
+         (right-cols (funcall cols right 'right)))
+    (set-window-margins win left-cols right-cols)
+    ;; the fringe lies between the margin and the text: hide it there
+    (set-window-fringes win (and left-cols 0) (and right-cols 0))))
 
 (defun org-slideboard--setup-column-window (win base col i)
   "Show column COL of buffer BASE in window WIN.
@@ -1302,7 +1306,8 @@ must be the base buffer, narrowed to the slide."
     (when (buffer-live-p buf) (kill-buffer buf)))
   (setq org-slideboard--column-buffers '())
   (dolist (win (window-list))
-    (set-window-margins win nil nil)))
+    (set-window-margins win nil nil)
+    (set-window-fringes win nil nil)))
 
 ;;** Per-file settings
 
