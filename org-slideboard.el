@@ -1037,11 +1037,12 @@ See `org-slideboard-margins'.  The windows must be laid out already."
 (defun org-slideboard--setup-column-window (win base col i)
   "Show column COL of buffer BASE in window WIN.
 I is the column index, used to name the indirect buffer."
-  (org-slideboard--apply-margins win)
   (let ((buf (make-indirect-buffer
               base (generate-new-buffer-name (format "*org-slideboard-col-%d*" i)) t)))
     (push buf org-slideboard--column-buffers)
     (set-window-buffer win buf)
+    ;; after `set-window-buffer', which resets the margins to the buffer's
+    (org-slideboard--apply-margins win)
     (org-slideboard--hide-mode-line win)
     (with-selected-window win
       ;; the clone shares the base buffer's face remapping list, so text
