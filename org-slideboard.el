@@ -650,6 +650,57 @@ direct children with a BEAMER_col property or a BMCOL tag."
   "The parts of the slide being shown that appear in steps.
 Each element is (BEG END SPEC), see `org-slideboard--slide-reveals'.")
 
+(defcustom org-slideboard-covered 'hidden
+  "How the parts of a slide that are not shown yet are drawn.
+With `hidden' they are left out and take no space; with `transparent'
+they are drawn faded (face `org-slideboard-covered'), as beamer does
+with \\setbeamercovered{transparent}.  The default comes from the
+file: a #+BEAMER_HEADER: or #+LATEX_HEADER: line with
+\\setbeamercovered{transparent} (or {dynamic}) gives `transparent'.
+It can also be set for one file with #+SLIDEBOARD: covered:transparent,
+and for one slide (or a section) with the property SLIDEBOARD_COVERED
+or a #+BEAMER: \\setbeamercovered{transparent} line in the slide."
+  :type '(choice (const :tag "Left out" hidden)
+                 (const :tag "Faded" transparent))
+  :group 'org-slideboard)
+
+(defface org-slideboard-covered
+  '((t :inherit shadow))
+  "Face for the parts of a slide not shown yet, see `org-slideboard-covered'."
+  :group 'org-slideboard)
+
+(defface org-slideboard-alert
+  '((t :inherit error))
+  "Face for the parts of a slide alerted at the current step.
+That is, with an alert@ overlay specification such as <alert@2>, or
+<+-| alert@+> on a list to highlight the current item."
+  :group 'org-slideboard)
+
+(defvar org-slideboard--slide-covered 'hidden
+  "The `org-slideboard-covered' style of the slide being shown.")
+
+(defun org-slideboard--covered-p (value)
+  "Return non-nil if VALUE is a valid `org-slideboard-covered'."
+  (memq value '(hidden transparent)))
+(put 'org-slideboard-covered 'safe-local-variable #'org-slideboard--covered-p)
+
+(defconst org-slideboard--covered-regexp
+  "\\\\setbeamercovered{[ \t]*\\(transparent\\|dynamic\\|invisible\\)"
+  "Regexp for a \\setbeamercovered command, with the style in group 1.")
+
+(defun org-slideboard--covered-setting (pos)
+  "Return the covered style of the slide at heading POS, or nil.
+From its SLIDEBOARD_COVERED property (or a heading above), or else from
+a \\setbeamercovered line in the slide, which is narrowed to."
+  (let* ((v (org-with-wide-buffer (org-entry-get pos "SLIDEBOARD_COVERED" t)))
+         (sym (and v (intern (downcase (string-trim v))))))
+    (cond ((org-slideboard--covered-p sym) sym)
+          ((save-excursion
+             (goto-char (point-min))
+             (let ((case-fold-search nil))
+               (re-search-forward org-slideboard--covered-regexp nil t)))
+           (if (equal (match-string 1) "invisible") 'hidden 'transparent)))))
+
 (defun org-slideboard--spec-number (string plus)
   "Return the step number written as STRING in an overlay specification.
 A + or . (with an optional offset, as in +(1)) stands for PLUS.
@@ -662,21 +713,22 @@ Return nil for an empty STRING, or for + when PLUS is nil."
 
 (defun org-slideboard--parse-overlay-spec (string &optional plus)
   "Parse STRING, a beamer overlay specification such as <2-> or <+->.
-PLUS is the value of + in it.  Return (INVERT . INTERVALS), where
-INTERVALS are (FROM . TO) step ranges, TO nil meaning no end, and
-INVERT is non-nil for invisible@.  Return nil if STRING does not
-change what is shown, e.g. <alert@2>.  Only the actions that show or
-hide (none, only@, uncover@, visible@ and invisible@) count; others,
-such as alert@, are ignored."
+PLUS is the value of + in it.  Return a plist (:invert INVERT :show
+SHOW :alert ALERT).  SHOW are the steps at which the part is shown,
+from the actions that show or hide (none, only@, uncover@, visible@
+and invisible@, which sets INVERT), and ALERT those at which it is
+alerted (alert@).  Both are lists of (FROM . TO) step ranges, TO nil
+meaning no end.  Return nil if STRING has neither, e.g. <structure@2>."
   (when (and string
              (string-match "\\`[ \t]*\\[?<\\([^>]*\\)>\\]?[ \t]*\\'" string))
     (let ((invert nil)
-          (intervals '()))
+          (show '())
+          (alert '()))
       (dolist (action (split-string (match-string 1 string) "|" t "[ \t]*"))
         (let* ((at (string-search "@" action))
                (mode (and at (substring action 0 at)))
                (body (if at (substring action (1+ at)) action)))
-          (when (member mode '(nil "only" "uncover" "visible" "invisible"))
+          (when (member mode '(nil "only" "uncover" "visible" "invisible" "alert"))
             (when (equal mode "invisible") (setq invert t))
             (dolist (part (split-string body "," t "[ \t]*"))
               (when (string-match "\\`\\([^-]*\\)\\(-\\)?\\(.*\\)\\'" part)
@@ -685,21 +737,38 @@ such as alert@, are ignored."
                        (b (match-string 3 part))
                        (from (org-slideboard--spec-number a plus))
                        (to (org-slideboard--spec-number b plus)))
-                  (cond (dash (push (cons (or from 1) to) intervals))
-                        (from (push (cons from from) intervals)))))))))
-      (and intervals (cons invert (nreverse intervals))))))
+                  (let ((iv (cond (dash (cons (or from 1) to))
+                                  (from (cons from from)))))
+                    (when iv
+                      (if (equal mode "alert")
+                          (push iv alert)
+                        (push iv show))))))))))
+      (and (or show alert)
+           (list :invert invert :show (nreverse show) :alert (nreverse alert))))))
+
+(defun org-slideboard--in-intervals-p (intervals step)
+  "Return non-nil if STEP is in one of INTERVALS, (FROM . TO) step ranges."
+  (seq-some (lambda (iv) (and (>= step (car iv))
+                              (or (null (cdr iv)) (<= step (cdr iv)))))
+            intervals))
 
 (defun org-slideboard--spec-visible-p (spec step)
   "Return non-nil if what SPEC applies to is shown at STEP.
-SPEC is a value of `org-slideboard--parse-overlay-spec'."
-  (let ((in (seq-some (lambda (iv) (and (>= step (car iv))
-                                        (or (null (cdr iv)) (<= step (cdr iv)))))
-                      (cdr spec))))
-    (if (car spec) (not in) in)))
+SPEC is a value of `org-slideboard--parse-overlay-spec'.  Without
+steps at which it is shown, it is always shown."
+  (let ((show (plist-get spec :show)))
+    (or (null show)
+        (let ((in (org-slideboard--in-intervals-p show step)))
+          (if (plist-get spec :invert) (not in) in)))))
+
+(defun org-slideboard--spec-alert-p (spec step)
+  "Return non-nil if what SPEC applies to is alerted at STEP."
+  (org-slideboard--in-intervals-p (plist-get spec :alert) step))
 
 (defun org-slideboard--spec-max (spec)
   "Return the highest step number in SPEC."
-  (apply #'max 1 (mapcar (lambda (iv) (max (car iv) (or (cdr iv) 0))) (cdr spec))))
+  (apply #'max 1 (mapcar (lambda (iv) (max (car iv) (or (cdr iv) 0)))
+                         (append (plist-get spec :show) (plist-get spec :alert)))))
 
 (defconst org-slideboard--spec-snippet-regexp "@@b\\(?:eamer\\)?:\\(<[^@\n]*>\\)@@"
   "Regexp for an export snippet holding a beamer overlay specification.")
@@ -771,7 +840,7 @@ to the list of (BEG END SPEC), and `org-slideboard--steps'."
            (setq step (1+ step)
                  used nil
                  steps (max steps step))
-           (push (list beg (point-max) (list nil (cons step nil))) reveals))
+           (push (list beg (point-max) (list :show (list (cons step nil)))) reveals))
           (`(,beg ,_ ,end ,string . ,rest)
            (let* ((plus (when (string-match-p "\\+" string)
                           (setq step (if used (1+ step) step)
@@ -779,23 +848,43 @@ to the list of (BEG END SPEC), and `org-slideboard--steps'."
                           step))
                   (spec (org-slideboard--parse-overlay-spec string (or plus step))))
              (when spec
-               (when (car rest) (setcar spec (not (car spec))))
+               (when (car rest)
+                 (setq spec (plist-put spec :invert (not (plist-get spec :invert)))))
                (setq steps (max steps (org-slideboard--spec-max spec)))
                (push (list beg end spec) reveals))))))
       (setq org-slideboard--reveals (nreverse reveals)
             org-slideboard--steps steps))))
 
+(defun org-slideboard--look-region (beg end face priority)
+  "Show the region BEG END in FACE during the show, at overlay PRIORITY.
+The overlay property `org-slideboard-look' is FACE too, so that list
+bullets can follow, see `org-slideboard--style-lists'."
+  (let ((ov (make-overlay beg end nil t nil)))
+    (overlay-put ov 'face face)
+    (overlay-put ov 'org-slideboard-look face)
+    (overlay-put ov 'priority priority)
+    (overlay-put ov 'evaporate t)
+    (push ov org-slideboard--hide-overlays)))
+
 (defun org-slideboard--hide-unrevealed (beg end)
-  "Hide what is not shown at the current step between BEG and END.
-See `org-slideboard--slide-reveals'.  Overlay specification snippets
-such as @@beamer:<2->@@ are hidden too."
+  "Draw what appears in steps between BEG and END for the current step.
+See `org-slideboard--slide-reveals'.  What is not shown yet is hidden,
+or faded if the slide's covered style is `transparent' (see
+`org-slideboard-covered'), and what is alerted at this step is shown
+in the face `org-slideboard-alert'.  Overlay specification snippets
+such as @@beamer:<2->@@ are hidden."
   (add-to-invisibility-spec 'org-slideboard)
   (dolist (r org-slideboard--reveals)
     (let ((b (max beg (nth 0 r)))
-          (e (min end (nth 1 r))))
-      (when (and (< b e)
-                 (not (org-slideboard--spec-visible-p (nth 2 r) org-slideboard--step)))
-        (org-slideboard--hide-region b e))))
+          (e (min end (nth 1 r)))
+          (spec (nth 2 r)))
+      (when (< b e)
+        (cond ((not (org-slideboard--spec-visible-p spec org-slideboard--step))
+               (if (eq org-slideboard--slide-covered 'transparent)
+                   (org-slideboard--look-region b e 'org-slideboard-covered 50)
+                 (org-slideboard--hide-region b e)))
+              ((org-slideboard--spec-alert-p spec org-slideboard--step)
+               (org-slideboard--look-region b e 'org-slideboard-alert 60))))))
   (save-excursion
     (goto-char beg)
     (while (re-search-forward org-slideboard--spec-snippet-regexp end t)
@@ -932,6 +1021,14 @@ with overlays, so the buffer text is not changed."
                         (if (get-text-property 0 'face b)
                             b
                           (propertize b 'face 'org-slideboard-bullet)))))
+                   ;; faded or alerted with its item, see
+                   ;; `org-slideboard--hide-unrevealed'
+                   (look (get-char-property bullet-beg 'org-slideboard-look))
+                   (new-bullet
+                    (if (and new-bullet look)
+                        (propertize (substring-no-properties new-bullet)
+                                    'face (list look (get-text-property 0 'face new-bullet)))
+                      new-bullet))
                    (bullet (or new-bullet
                                (buffer-substring bullet-beg bullet-end)))
                    (indent (if org-slideboard-hanging-indent
@@ -1559,6 +1656,7 @@ Parts that are functions can only be set in the configuration."
     ("src" org-slideboard-src-display org-slideboard--src-display-p)
     ("code-width" org-slideboard-src-code-width numberp)
     ("margins" org-slideboard-margins org-slideboard--margins-p)
+    ("covered" org-slideboard-covered org-slideboard--covered-p)
     ("src-split" org-slideboard-src-split org-slideboard--src-split-p)
     ("bullets" org-slideboard-list-bullets org-slideboard--string-list-p)
     ("list-indent" org-slideboard-list-indent natnump)
@@ -1638,7 +1736,19 @@ invalid values are skipped with a message."
          ((not (funcall (nth 2 entry) val))
           (message "org-slideboard: ignoring %s:%S" key val))
          (t
-          (org-slideboard--set-setting (nth 1 entry) val)))))))
+          (org-slideboard--set-setting (nth 1 entry) val)))))
+    ;; beamer's \setbeamercovered in the preamble, unless set above
+    (unless (assq 'org-slideboard-covered org-slideboard--saved-settings)
+      (let ((header (mapconcat #'identity
+                               (apply #'append
+                                      (mapcar #'cdr (org-collect-keywords
+                                                     '("BEAMER_HEADER" "LATEX_HEADER"))))
+                               "\n"))
+            (case-fold-search nil))
+        (when (string-match org-slideboard--covered-regexp header)
+          (org-slideboard--set-setting
+           'org-slideboard-covered
+           (if (equal (match-string 1 header) "invisible") 'hidden 'transparent)))))))
 
 (defun org-slideboard--restore-keyword-settings ()
   "Undo `org-slideboard--apply-keyword-settings' in the current buffer."
@@ -2494,6 +2604,8 @@ On a title or section page, show that page again."
     (setq org-slideboard--slide-margins (or (org-slideboard--margins-setting (point))
                                             org-slideboard-margins))
     ;; beamer overlays: the parts that appear in steps
+    (setq org-slideboard--slide-covered (or (org-slideboard--covered-setting (point))
+                                            org-slideboard-covered))
     (org-slideboard--slide-reveals)
     (setq org-slideboard--step (max 1 (min org-slideboard--step org-slideboard--steps)))
     (let ((src (and (not cols) (org-slideboard--slide-src-split))))

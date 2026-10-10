@@ -243,6 +243,22 @@ This paragraph comes after a =\pause=, at step 3.
 :END:
 This block has =BEAMER_ACT= set to =<4->=.
 
+** Highlighting the current step                                      :slide:
+:PROPERTIES:
+:SLIDEBOARD_COVERED: transparent
+:END:
+#+BEAMER: \setbeamercovered{transparent}
+With =\setbeamercovered{transparent}=, what is not shown at a step is
+drawn faded instead of left out.  This list has =:overlay <+| alert@+>=,
+so each item is shown, and highlighted, only at its own step:
+#+ATTR_BEAMER: :overlay <+| alert@+>
++ Every item is on the slide from the start.
++ The current one is highlighted; the others are faded.
++ PgDn moves the highlight down,
++ and PgUp moves it back up.
+With =<+-| alert@+>= instead, the items already passed stay in full
+colour.
+
 ** Paragraphs are reflowed                                            :slide:
 This paragraph is written in the file with short,
 hard-wrapped lines,

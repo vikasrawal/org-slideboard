@@ -676,11 +676,39 @@ beamer export builds the slide up in the same way:
 Comes after the second item.
 #+end_example
 
-Specifications such as =<2>=, =<2->=, =<-3>=, =<2-3>=, =<1,3->=, =<+->=
-and =<invisible@2>= are understood.  What is not shown yet takes no
-space: later text moves down as it appears, where beamer would keep its
-place.  Actions that only change the look, such as =<alert@2>=, are
-ignored, and a =\pause= applies to the rest of the slide.
+Specifications such as =<2>=, =<2->=, =<-3>=, =<2-3>=, =<1,3->=, =<+->=,
+=<invisible@2>= and =<alert@2>= are understood; a =\pause= applies to
+the rest of the slide.
+
+*** Faded and highlighted steps
+By default, what is not shown yet takes no space: later text moves down
+as it appears.  With beamer's =\setbeamercovered{transparent}= it is
+drawn faded instead (face =org-slideboard-covered=), and =alert@=
+highlights a part at the given steps (face =org-slideboard-alert=).
+Together they give a list in which every item is on the slide, the
+current one is highlighted, and the highlight moves with each step:
+
+#+begin_example
+,#+BEAMER: \setbeamercovered{transparent}
+,#+ATTR_BEAMER: :overlay <+| alert@+>
++ First
++ Second
++ Third
+#+end_example
+
+With =<+| alert@+>= the other items are all faded; with =<+-| alert@+>=
+the items already passed stay in full colour; with =<alert@+>= every
+item is in full colour and only the highlight moves.  List bullets are
+faded and highlighted with their items.
+
+The faded style is set by =org-slideboard-covered= (=hidden= or
+=transparent=).  It is taken from the file: a =#+BEAMER_HEADER:= or
+=#+LATEX_HEADER:= line with =\setbeamercovered{transparent}= makes it
+=transparent= for the whole presentation.  It can also be set with
+=#+SLIDEBOARD: covered:transparent=, and for one slide (or a section)
+with a =#+BEAMER: \setbeamercovered{transparent}= line in the slide or
+the property =SLIDEBOARD_COVERED=.  Equations and images are pictures,
+so they are not faded.
 
 ** Lists
 Lists are laid out with overlays, so the file is not changed:
@@ -825,6 +853,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =code-width=        | =org-slideboard-src-code-width=                       | number                                |
 | =src-split=         | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=             |
 | =margins=           | =org-slideboard-margins=                              | number, =(LEFT RIGHT)=, or =nil=      |
+| =covered=           | =org-slideboard-covered=                              | =hidden= / =transparent=              |
 | =bullets=           | =org-slideboard-list-bullets=                         | list of strings, or =nil=             |
 | =list-indent=       | =org-slideboard-list-indent=                          | number                                |
 | =hanging=           | =org-slideboard-hanging-indent=                       | =t= / =nil=                           |
