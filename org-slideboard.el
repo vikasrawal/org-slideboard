@@ -1,4 +1,4 @@
-1;;; org-slideboard.el --- Present Org files as slides with columns and code -*- lexical-binding: t; -*-
+;;; org-slideboard.el --- Present Org files as slides with columns and code -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2014 John Kitchin
 ;; Copyright (C) 2026 Vikas Rawal
@@ -569,7 +569,7 @@ This is where the settings are read, since they may be local to it."
         ;; keyword lines
         (goto-char beg)
         (while (re-search-forward
-                "^[ \t]*#\\+\\(?:name\\|results\\|caption\\|attr_[a-z]+\\)\\(?:\\[.*\\]\\)?:.*\n?"
+                "^[ \t]*#\\+\\(?:name\\|results\\|caption\\|beamer\\|attr_[a-z]+\\)\\(?:\\[.*\\]\\)?:.*\n?"
                 end t)
           (org-slideboard--hide-region (match-beginning 0) (match-end 0)))
         ;; standalone raw LaTeX lines, e.g. \vspace{-0.5cm}, but not
@@ -637,6 +637,179 @@ direct children with a BEAMER_col property or a BMCOL tag."
         (dolist (c cols)
           (when (<= (car c) 0) (setcar c (/ 1.0 n)))))
       cols)))
+
+;;** Beamer overlays
+
+(defvar org-slideboard--step 1
+  "The step of the slide being shown, from 1 to `org-slideboard--steps'.")
+
+(defvar org-slideboard--steps 1
+  "The number of steps of the slide being shown.")
+
+(defvar org-slideboard--reveals '()
+  "The parts of the slide being shown that appear in steps.
+Each element is (BEG END SPEC), see `org-slideboard--slide-reveals'.")
+
+(defun org-slideboard--spec-number (string plus)
+  "Return the step number written as STRING in an overlay specification.
+A + or . (with an optional offset, as in +(1)) stands for PLUS.
+Return nil for an empty STRING, or for + when PLUS is nil."
+  (cond ((string-match "\\`[0-9]+\\'" string) (string-to-number string))
+        ((and plus (string-match "\\`[+.]\\(?:(\\(-?[0-9]+\\))\\)?\\'" string))
+         (+ plus (if (match-string 1 string)
+                     (string-to-number (match-string 1 string))
+                   0)))))
+
+(defun org-slideboard--parse-overlay-spec (string &optional plus)
+  "Parse STRING, a beamer overlay specification such as <2-> or <+->.
+PLUS is the value of + in it.  Return (INVERT . INTERVALS), where
+INTERVALS are (FROM . TO) step ranges, TO nil meaning no end, and
+INVERT is non-nil for invisible@.  Return nil if STRING does not
+change what is shown, e.g. <alert@2>.  Only the actions that show or
+hide (none, only@, uncover@, visible@ and invisible@) count; others,
+such as alert@, are ignored."
+  (when (and string
+             (string-match "\\`[ \t]*\\[?<\\([^>]*\\)>\\]?[ \t]*\\'" string))
+    (let ((invert nil)
+          (intervals '()))
+      (dolist (action (split-string (match-string 1 string) "|" t "[ \t]*"))
+        (let* ((at (string-search "@" action))
+               (mode (and at (substring action 0 at)))
+               (body (if at (substring action (1+ at)) action)))
+          (when (member mode '(nil "only" "uncover" "visible" "invisible"))
+            (when (equal mode "invisible") (setq invert t))
+            (dolist (part (split-string body "," t "[ \t]*"))
+              (when (string-match "\\`\\([^-]*\\)\\(-\\)?\\(.*\\)\\'" part)
+                (let* ((a (match-string 1 part))
+                       (dash (match-string 2 part))
+                       (b (match-string 3 part))
+                       (from (org-slideboard--spec-number a plus))
+                       (to (org-slideboard--spec-number b plus)))
+                  (cond (dash (push (cons (or from 1) to) intervals))
+                        (from (push (cons from from) intervals)))))))))
+      (and intervals (cons invert (nreverse intervals))))))
+
+(defun org-slideboard--spec-visible-p (spec step)
+  "Return non-nil if what SPEC applies to is shown at STEP.
+SPEC is a value of `org-slideboard--parse-overlay-spec'."
+  (let ((in (seq-some (lambda (iv) (and (>= step (car iv))
+                                        (or (null (cdr iv)) (<= step (cdr iv)))))
+                      (cdr spec))))
+    (if (car spec) (not in) in)))
+
+(defun org-slideboard--spec-max (spec)
+  "Return the highest step number in SPEC."
+  (apply #'max 1 (mapcar (lambda (iv) (max (car iv) (or (cdr iv) 0))) (cdr spec))))
+
+(defconst org-slideboard--spec-snippet-regexp "@@b\\(?:eamer\\)?:\\(<[^@\n]*>\\)@@"
+  "Regexp for an export snippet holding a beamer overlay specification.")
+
+(defun org-slideboard--item-spec (item)
+  "Return the overlay specification at the start of ITEM, a string, or nil.
+That is an export snippet such as @@beamer:<2->@@ before the item text."
+  (let* ((par (car (org-element-contents item)))
+         (obj (and (eq (org-element-type par) 'paragraph)
+                   (car (org-element-contents par)))))
+    (and (eq (org-element-type obj) 'export-snippet)
+         (member (downcase (org-element-property :back-end obj)) '("beamer" "b"))
+         (string-match-p "\\`<.*>\\'" (org-element-property :value obj))
+         (org-element-property :value obj))))
+
+(defun org-slideboard--list-spec (list)
+  "Return the :overlay of the #+ATTR_BEAMER line of plain LIST, or nil."
+  (let ((attr (mapconcat #'identity (org-element-property :attr_beamer list) " ")))
+    (and (string-match ":overlay[ \t]+\\(\\[<[^]\n]*>\\]\\|<[^>\n]*>\\)" attr)
+         (match-string 1 attr))))
+
+(defun org-slideboard--slide-reveals ()
+  "Find the parts of the slide that appear in steps, as beamer would.
+The current buffer is the base buffer, narrowed to the slide.  The
+parts are list items with a beamer :overlay on their list or a
+@@beamer:<...>@@ snippet before their text, headings in the slide
+with a BEAMER_ACT property, and the rest of the slide after a \\pause
+line (#+BEAMER: \\pause or a raw \\pause).  Set `org-slideboard--reveals'
+to the list of (BEG END SPEC), and `org-slideboard--steps'."
+  (let ((events '())
+        (case-fold-search t))
+    (save-excursion
+      ;; \pause lines
+      (goto-char (point-min))
+      (while (re-search-forward "^[ \t]*\\(?:#\\+beamer:[ \t]*\\)?\\\\pause\\b.*$" nil t)
+        (push (list (line-beginning-position) 'pause (min (1+ (match-end 0)) (point-max)))
+              events))
+      ;; headings below the slide heading
+      (goto-char (point-min))
+      (while (outline-next-heading)
+        (let ((act (org-entry-get nil "BEAMER_ACT")))
+          (when (and act (not (string-prefix-p "[" (string-trim act))))
+            (push (list (point) 'heading
+                        (save-excursion (org-end-of-subtree t t) (point))
+                        (if (string-prefix-p "<" (string-trim act))
+                            act
+                          (concat "<" (string-trim act) ">"))
+                        (equal (downcase (or (org-entry-get nil "BEAMER_ENV") ""))
+                               "invisibleenv"))
+                  events)))))
+    ;; list items
+    (org-element-map (org-element-parse-buffer) 'item
+      (lambda (item)
+        (let ((spec (or (org-slideboard--item-spec item)
+                        (org-slideboard--list-spec (org-element-property :parent item)))))
+          (when spec
+            (push (list (org-element-property :begin item) 'item
+                        (org-element-property :end item) spec)
+                  events)))))
+    ;; in buffer order, with a step counter like beamer's: + takes the
+    ;; current step the first time after a \pause, then the next one
+    (let ((step 1)
+          (used nil)
+          (steps 1)
+          (reveals '()))
+      (dolist (ev (sort events (lambda (a b) (< (car a) (car b)))))
+        (pcase ev
+          (`(,_ pause ,beg)
+           (setq step (1+ step)
+                 used nil
+                 steps (max steps step))
+           (push (list beg (point-max) (list nil (cons step nil))) reveals))
+          (`(,beg ,_ ,end ,string . ,rest)
+           (let* ((plus (when (string-match-p "\\+" string)
+                          (setq step (if used (1+ step) step)
+                                used t)
+                          step))
+                  (spec (org-slideboard--parse-overlay-spec string (or plus step))))
+             (when spec
+               (when (car rest) (setcar spec (not (car spec))))
+               (setq steps (max steps (org-slideboard--spec-max spec)))
+               (push (list beg end spec) reveals))))))
+      (setq org-slideboard--reveals (nreverse reveals)
+            org-slideboard--steps steps))))
+
+(defun org-slideboard--hide-unrevealed (beg end)
+  "Hide what is not shown at the current step between BEG and END.
+See `org-slideboard--slide-reveals'.  Overlay specification snippets
+such as @@beamer:<2->@@ are hidden too."
+  (add-to-invisibility-spec 'org-slideboard)
+  (dolist (r org-slideboard--reveals)
+    (let ((b (max beg (nth 0 r)))
+          (e (min end (nth 1 r))))
+      (when (and (< b e)
+                 (not (org-slideboard--spec-visible-p (nth 2 r) org-slideboard--step)))
+        (org-slideboard--hide-region b e))))
+  (save-excursion
+    (goto-char beg)
+    (while (re-search-forward org-slideboard--spec-snippet-regexp end t)
+      ;; a real snippet, not one written as an example in =verbatim=
+      (when (save-excursion
+              (save-match-data
+                (eq (org-element-type
+                     (progn (goto-char (match-beginning 0)) (org-element-context)))
+                    'export-snippet)))
+        (org-slideboard--hide-region (match-beginning 0)
+                                   ;; and the space after it
+                                   (if (memq (char-after) '(?\s ?\t))
+                                       (1+ (match-end 0))
+                                     (match-end 0)))))))
 
 (defvar org-slideboard--image-times (make-hash-table :test #'equal)
   "Modification times of the image files shown, by file name.")
@@ -1068,6 +1241,7 @@ I is the column index, used to name the indirect buffer."
       (goto-char (point-min))
       (visual-line-mode 1)
       (org-slideboard--hide-clutter (point-min) (point-max))
+      (org-slideboard--hide-unrevealed (point-min) (point-max))
       (org-slideboard--hide-drawers)
       (org-slideboard--reflow)
       (org-slideboard--expand-macros)
@@ -2319,6 +2493,9 @@ On a title or section page, show that page again."
     (setq org-slideboard--slide-src (org-slideboard--src-setting (point)))
     (setq org-slideboard--slide-margins (or (org-slideboard--margins-setting (point))
                                             org-slideboard-margins))
+    ;; beamer overlays: the parts that appear in steps
+    (org-slideboard--slide-reveals)
+    (setq org-slideboard--step (max 1 (min org-slideboard--step org-slideboard--steps)))
     (let ((src (and (not cols) (org-slideboard--slide-src-split))))
       (when src
         (let ((split (org-slideboard--src-split-direction (point-min))))
@@ -2349,30 +2526,42 @@ On a title or section page, show that page again."
     ;; clear the minibuffer
     (message "")))
 
+(defun org-slideboard--show-step (step)
+  "Show STEP of the current slide, keeping the selected frame."
+  (setq org-slideboard--step step)
+  (org-slideboard--redraw-keeping-frame))
+
 (defun org-slideboard-next-slide ()
-  "Goto next slide in presentation."
+  "Show the next step of the slide, or else the next slide.
+See `org-slideboard--slide-reveals' for the steps."
   (interactive)
-  (find-file org-slideboard-presentation-file)
-  (widen)
-  (if (<= (+ org-slideboard-current-slide-number 1) (length org-slideboard-slide-list))
-      (progn
-        (setq org-slideboard-current-slide-number (+ org-slideboard-current-slide-number 1))
-        (org-slideboard-goto-slide org-slideboard-current-slide-number))
-    (org-slideboard-goto-slide org-slideboard-current-slide-number)
-    (message "This is the end. My only friend the end.  Jim Morrison.")))
+  (if (and (< org-slideboard--step org-slideboard--steps)
+           (markerp (cdr (assoc org-slideboard-current-slide-number
+                                org-slideboard-slide-list))))
+      (org-slideboard--show-step (1+ org-slideboard--step))
+    (find-file org-slideboard-presentation-file)
+    (widen)
+    (if (<= (+ org-slideboard-current-slide-number 1) (length org-slideboard-slide-list))
+        (org-slideboard-goto-slide (1+ org-slideboard-current-slide-number) 1)
+      (org-slideboard-goto-slide org-slideboard-current-slide-number)
+      (message "This is the end. My only friend the end.  Jim Morrison."))))
 
 
 (defun org-slideboard-previous-slide ()
-  "Goto previous slide in the list."
+  "Show the previous step of the slide, or else the previous slide.
+The previous slide is shown at its last step, as in a beamer PDF."
   (interactive)
-  (find-file org-slideboard-presentation-file)
-  (widen)
-  (if (> (- org-slideboard-current-slide-number 1) 0)
-      (progn
-        (setq org-slideboard-current-slide-number (- org-slideboard-current-slide-number 1))
-        (org-slideboard-goto-slide org-slideboard-current-slide-number))
-    (org-slideboard-goto-slide org-slideboard-current-slide-number)
-    (message "Once upon a time...")))
+  (if (and (> org-slideboard--step 1)
+           (markerp (cdr (assoc org-slideboard-current-slide-number
+                                org-slideboard-slide-list))))
+      (org-slideboard--show-step (1- org-slideboard--step))
+    (find-file org-slideboard-presentation-file)
+    (widen)
+    (if (> (- org-slideboard-current-slide-number 1) 0)
+        (org-slideboard-goto-slide (1- org-slideboard-current-slide-number)
+                                   most-positive-fixnum)
+      (org-slideboard-goto-slide org-slideboard-current-slide-number)
+      (message "Once upon a time..."))))
 
 
 (defun org-slideboard--setup-show ()
@@ -2507,7 +2696,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (org-slideboard--beautify)
   (unless org-slideboard-mode (org-slideboard-mode 1))
   (setq org-slideboard-current-slide-number 1)
-  (org-slideboard-goto-slide 1))
+  (org-slideboard-goto-slide 1 1))
 
 
 (defun org-slideboard-stop-slideshow ()
@@ -2559,7 +2748,10 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (text-scale-set 0)
   (delete-other-windows)
   (setq org-slideboard-presentation-file nil)
-  (setq org-slideboard-current-slide-number 1)
+  (setq org-slideboard-current-slide-number 1
+        org-slideboard--step 1
+        org-slideboard--steps 1
+        org-slideboard--reveals nil)
   (set-frame-name (if (buffer-file-name)
                       (abbreviate-file-name (buffer-file-name))))
   (org-slideboard--unbeautify)
@@ -2568,11 +2760,18 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (org-slideboard-mode -1))
 
 
-(defun org-slideboard-goto-slide (n)
-  "Goto slide N."
+(defun org-slideboard-goto-slide (n &optional step)
+  "Goto slide N, at STEP of its beamer overlays.
+Without STEP, a slide is shown from its first step, and the slide
+being shown at the step it is at."
   (interactive "nSlide number: ")
   (message "Going to slide %s" n)
   (find-file org-slideboard-presentation-file)
+  (setq org-slideboard--step (cond (step)
+                                   ((eql n org-slideboard-current-slide-number)
+                                    org-slideboard--step)
+                                   (t 1))
+        org-slideboard--steps 1)
   (setq org-slideboard-current-slide-number n)
   (widen)
   (let ((entry (cdr (assoc n org-slideboard-slide-list))))

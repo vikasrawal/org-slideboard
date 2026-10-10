@@ -181,8 +181,8 @@ strip, the frames, and the title and section pages.
 
 | Key       | Command                                  |
 |-----------+------------------------------------------|
-| =PgDn=    | next slide                               |
-| =PgUp=    | previous slide                           |
+| =PgDn=    | next step, or the next slide             |
+| =PgUp=    | previous step, or the previous slide     |
 | =C-c ;=   | show the current slide again             |
 | ~C-=~     | larger text in all frames of all slides  |
 | =C--=     | smaller text in all frames of all slides |
@@ -648,6 +648,39 @@ or all the slides of a section, use the property =SLIDEBOARD_MARGINS=:
 :SLIDEBOARD_MARGINS: (0.2 0.2)
 :END:
 #+end_example
+
+** Step by step (beamer overlays)
+A slide can be built up in steps, as with beamer overlays.  The key for
+the next slide shows the next step of the slide first, and the key for
+the previous slide goes back a step; going back to a slide shows it at
+its last step, as a beamer PDF does.  The same Org syntax is used, so the
+beamer export builds the slide up in the same way:
+
+- *A list with an overlay*: =#+ATTR_BEAMER: :overlay <+->= before a list
+  shows its items one at a time.
+- *An item with its own step*: an export snippet at the start of the
+  item, e.g. =- @@beamer:<3->@@ Comes at step 3= (or =@@b:<3->@@=).  It
+  overrides the list's overlay.
+- *A heading with a step*: a heading inside the slide, such as a block
+  or a column, with the property =BEAMER_ACT=, e.g. =<2->=.
+- *A pause*: =#+BEAMER: \pause= (or a =\pause= line) shows the rest of
+  the slide at the next step.
+
+#+begin_example
+,** A slide in steps                                                 :slide:
+,#+ATTR_BEAMER: :overlay <+->
++ First
++ Second
++ @@beamer:<4->@@ Last
+,#+BEAMER: \pause
+Comes after the second item.
+#+end_example
+
+Specifications such as =<2>=, =<2->=, =<-3>=, =<2-3>=, =<1,3->=, =<+->=
+and =<invisible@2>= are understood.  What is not shown yet takes no
+space: later text moves down as it appears, where beamer would keep its
+place.  Actions that only change the look, such as =<alert@2>=, are
+ignored, and a =\pause= applies to the rest of the slide.
 
 ** Lists
 Lists are laid out with overlays, so the file is not changed:

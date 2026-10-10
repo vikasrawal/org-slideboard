@@ -208,6 +208,41 @@ every frame of every slide back to where the show started.
 1. Numbered items keep their numbers.
 2. Like this.
 
+** Step by step                                                       :slide:
+Beamer overlays build a slide up in steps.  PgDn shows the next step,
+and PgUp goes back one.
+
+*** How it is written                                                 :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
++ =#+ATTR_BEAMER: :overlay <+->= before a list: one item per step.
++ =@@beamer:<5->@@= at the start of an item: that item at step 5.
++ =#+BEAMER: \pause= on its own line: the rest of the slide at the next
+  step.
++ =:BEAMER_ACT: <4->= in the properties of a heading, such as a block:
+  that heading at step 4.
+
+The same file exported to beamer builds up in the same way.
+
+*** What it does                                                      :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+#+ATTR_BEAMER: :overlay <+->
++ The first item, at step 1.
++ The second item, at step 2.
++ @@beamer:<5->@@ This item has its own step: 5, the last.
+#+BEAMER: \pause
+This paragraph comes after a =\pause=, at step 3.
+
+**** A block at step 4
+:PROPERTIES:
+:BEAMER_env: block
+:BEAMER_ACT: <4->
+:END:
+This block has =BEAMER_ACT= set to =<4->=.
+
 ** Paragraphs are reflowed                                            :slide:
 This paragraph is written in the file with short,
 hard-wrapped lines,
