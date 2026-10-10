@@ -1006,73 +1006,76 @@ with overlays, so the buffer text is not changed."
   (when (or org-slideboard-list-bullets org-slideboard-hanging-indent)
     (let ((bg (face-background 'default nil t)))
       (org-element-map (org-element-parse-buffer) 'item
-        (lambda (item)
-          (save-excursion
-            (let* ((depth (org-slideboard--list-depth item))
-                   (begin (org-element-property :begin item))
-                   (end (org-element-property :end item))
-                   (ordered (eq (org-element-property
-                                 :type (org-element-property :parent item))
-                                'ordered))
-                   (bullet-beg (progn (goto-char begin)
-                                      (skip-chars-forward " \t")
-                                      (point)))
-                   (bullet-end (+ bullet-beg
-                                  (length (string-trim-right
-                                           (org-element-property :bullet item)))))
-                   (text-beg (progn (goto-char bullet-end)
-                                    (skip-chars-forward " \t")
-                                    (point)))
-                   (bullets org-slideboard-list-bullets)
-                   (new-bullet
-                    (when (and bullets (not ordered))
-                      (let ((b (nth (mod depth (length bullets)) bullets)))
-                        ;; also accept the old (CHAR . STRING) format
-                        (when (consp b) (setq b (cdr b)))
-                        (if (get-text-property 0 'face b)
-                            b
-                          (propertize b 'face 'org-slideboard-bullet)))))
-                   ;; faded or alerted with its item, see
-                   ;; `org-slideboard--hide-unrevealed'
-                   (look (get-char-property bullet-beg 'org-slideboard-look))
-                   (new-bullet
-                    (if (and new-bullet look)
-                        (propertize (substring-no-properties new-bullet)
-                                    'face (list look (get-text-property 0 'face new-bullet)))
-                      new-bullet))
-                   (bullet (or new-bullet
-                               (buffer-substring bullet-beg bullet-end)))
-                   (indent (if org-slideboard-hanging-indent
-                               (make-string (* depth org-slideboard-list-indent) ?\s)
-                             (buffer-substring-no-properties begin bullet-beg)))
-                   ov)
-              ;; indentation (a zero-width overlay when there is none)
-              (setq ov (make-overlay begin bullet-beg nil t nil))
-              (overlay-put ov (if (= begin bullet-beg) 'before-string 'display)
-                           indent)
-              (push ov org-slideboard--hide-overlays)
-              ;; bullet
-              (when new-bullet
-                (setq ov (make-overlay bullet-beg bullet-end nil t nil))
-                (overlay-put ov 'display new-bullet)
-                (push ov org-slideboard--hide-overlays))
-              ;; wrapped lines start under the item text: the prefix is the
-              ;; indentation, an invisible copy of the bullet (same width)
-              ;; and the space after it
-              (when org-slideboard-hanging-indent
-                (let ((ghost (if (and bg (not (string-prefix-p "unspecified" bg)))
-                                 (propertize (substring-no-properties bullet)
-                                             'face (list (list :foreground bg)
-                                                         (or (get-text-property 0 'face bullet)
-                                                             (get-char-property bullet-beg 'face))))
-                               (make-string (string-width bullet) ?\s))))
-                  (setq ov (make-overlay text-beg end nil t nil))
-                  (overlay-put ov 'wrap-prefix
-                               (concat indent ghost
-                                       (buffer-substring-no-properties bullet-end text-beg)))
-                  ;; nested items lie inside their parent's overlay
-                  (overlay-put ov 'priority (+ 10 depth))
-                  (push ov org-slideboard--hide-overlays))))))))))
+		       (lambda (item)
+			 ;; not an item hidden at this step: the indentation and bullet
+			 ;; are display strings, which would be shown in its place
+			 (unless (invisible-p (org-element-property :begin item))
+			   (save-excursion
+			     (let* ((depth (org-slideboard--list-depth item))
+				    (begin (org-element-property :begin item))
+				    (end (org-element-property :end item))
+				    (ordered (eq (org-element-property
+						  :type (org-element-property :parent item))
+						 'ordered))
+				    (bullet-beg (progn (goto-char begin)
+						       (skip-chars-forward " \t")
+						       (point)))
+				    (bullet-end (+ bullet-beg
+						   (length (string-trim-right
+							    (org-element-property :bullet item)))))
+				    (text-beg (progn (goto-char bullet-end)
+						     (skip-chars-forward " \t")
+						     (point)))
+				    (bullets org-slideboard-list-bullets)
+				    (new-bullet
+				     (when (and bullets (not ordered))
+				       (let ((b (nth (mod depth (length bullets)) bullets)))
+					 ;; also accept the old (CHAR . STRING) format
+					 (when (consp b) (setq b (cdr b)))
+					 (if (get-text-property 0 'face b)
+					     b
+					   (propertize b 'face 'org-slideboard-bullet)))))
+				    ;; faded or alerted with its item, see
+				    ;; `org-slideboard--hide-unrevealed'
+				    (look (get-char-property bullet-beg 'org-slideboard-look))
+				    (new-bullet
+				     (if (and new-bullet look)
+					 (propertize (substring-no-properties new-bullet)
+						     'face (list look (get-text-property 0 'face new-bullet)))
+				       new-bullet))
+				    (bullet (or new-bullet
+						(buffer-substring bullet-beg bullet-end)))
+				    (indent (if org-slideboard-hanging-indent
+						(make-string (* depth org-slideboard-list-indent) ?\s)
+					      (buffer-substring-no-properties begin bullet-beg)))
+				    ov)
+			       ;; indentation (a zero-width overlay when there is none)
+			       (setq ov (make-overlay begin bullet-beg nil t nil))
+			       (overlay-put ov (if (= begin bullet-beg) 'before-string 'display)
+					    indent)
+			       (push ov org-slideboard--hide-overlays)
+			       ;; bullet
+			       (when new-bullet
+				 (setq ov (make-overlay bullet-beg bullet-end nil t nil))
+				 (overlay-put ov 'display new-bullet)
+				 (push ov org-slideboard--hide-overlays))
+			       ;; wrapped lines start under the item text: the prefix is the
+			       ;; indentation, an invisible copy of the bullet (same width)
+			       ;; and the space after it
+			       (when org-slideboard-hanging-indent
+				 (let ((ghost (if (and bg (not (string-prefix-p "unspecified" bg)))
+						  (propertize (substring-no-properties bullet)
+							      'face (list (list :foreground bg)
+									  (or (get-text-property 0 'face bullet)
+									      (get-char-property bullet-beg 'face))))
+						(make-string (string-width bullet) ?\s))))
+				   (setq ov (make-overlay text-beg end nil t nil))
+				   (overlay-put ov 'wrap-prefix
+						(concat indent ghost
+							(buffer-substring-no-properties bullet-end text-beg)))
+				   ;; nested items lie inside their parent's overlay
+				   (overlay-put ov 'priority (+ 10 depth))
+				   (push ov org-slideboard--hide-overlays)))))))))))
 
 (defun org-slideboard--org-images ()
   "Redisplay Org inline images in the current buffer the normal way."
