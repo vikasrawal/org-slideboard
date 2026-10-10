@@ -701,6 +701,17 @@ the items already passed stay in full colour; with =<alert@+>= every
 item is in full colour and only the highlight moves.  List bullets are
 faded and highlighted with their items.
 
+Faded and hidden parts can be mixed on one slide, as in beamer: with
+=only@= in the specification (or a heading with =BEAMER_ENV= =onlyenv=), a
+part is left out until its step even when the others are faded.  The
+same goes for =visible@= and =invisible@=.
+
+#+begin_example
+,#+BEAMER: \setbeamercovered{transparent}
++ @@beamer:<2->@@ Faded until step 2
++ @@beamer:<only@3->@@ Left out until step 3
+#+end_example
+
 The faded style is set by =org-slideboard-covered= (=hidden= or
 =transparent=).  It is taken from the file: a =#+BEAMER_HEADER:= or
 =#+LATEX_HEADER:= line with =\setbeamercovered{transparent}= makes it

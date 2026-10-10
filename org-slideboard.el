@@ -713,15 +713,19 @@ Return nil for an empty STRING, or for + when PLUS is nil."
 
 (defun org-slideboard--parse-overlay-spec (string &optional plus)
   "Parse STRING, a beamer overlay specification such as <2-> or <+->.
-PLUS is the value of + in it.  Return a plist (:invert INVERT :show
-SHOW :alert ALERT).  SHOW are the steps at which the part is shown,
-from the actions that show or hide (none, only@, uncover@, visible@
-and invisible@, which sets INVERT), and ALERT those at which it is
-alerted (alert@).  Both are lists of (FROM . TO) step ranges, TO nil
-meaning no end.  Return nil if STRING has neither, e.g. <structure@2>."
+PLUS is the value of + in it.  Return a plist (:invert INVERT :hide
+HIDE :show SHOW :alert ALERT).  SHOW are the steps at which the part
+is shown, from the actions that show or hide (none, only@, uncover@,
+visible@ and invisible@, which sets INVERT), and ALERT those at which
+it is alerted (alert@).  Both are lists of (FROM . TO) step ranges, TO
+nil meaning no end.  HIDE is non-nil for only@, visible@ and
+invisible@: the part is left out when not shown, even if covered parts
+are drawn faded (see `org-slideboard-covered').  Return nil if STRING
+has neither SHOW nor ALERT, e.g. <structure@2>."
   (when (and string
              (string-match "\\`[ \t]*\\[?<\\([^>]*\\)>\\]?[ \t]*\\'" string))
     (let ((invert nil)
+          (hide nil)
           (show '())
           (alert '()))
       (dolist (action (split-string (match-string 1 string) "|" t "[ \t]*"))
@@ -730,6 +734,9 @@ meaning no end.  Return nil if STRING has neither, e.g. <structure@2>."
                (body (if at (substring action (1+ at)) action)))
           (when (member mode '(nil "only" "uncover" "visible" "invisible" "alert"))
             (when (equal mode "invisible") (setq invert t))
+            ;; only@ leaves the part out, even when what is covered is
+            ;; drawn faded; so do visible@ and invisible@
+            (when (member mode '("only" "visible" "invisible")) (setq hide t))
             (dolist (part (split-string body "," t "[ \t]*"))
               (when (string-match "\\`\\([^-]*\\)\\(-\\)?\\(.*\\)\\'" part)
                 (let* ((a (match-string 1 part))
@@ -744,7 +751,8 @@ meaning no end.  Return nil if STRING has neither, e.g. <structure@2>."
                           (push iv alert)
                         (push iv show))))))))))
       (and (or show alert)
-           (list :invert invert :show (nreverse show) :alert (nreverse alert))))))
+           (list :invert invert :hide hide
+                 :show (nreverse show) :alert (nreverse alert))))))
 
 (defun org-slideboard--in-intervals-p (intervals step)
   "Return non-nil if STEP is in one of INTERVALS, (FROM . TO) step ranges."
@@ -770,7 +778,7 @@ steps at which it is shown, it is always shown."
   (apply #'max 1 (mapcar (lambda (iv) (max (car iv) (or (cdr iv) 0)))
                          (append (plist-get spec :show) (plist-get spec :alert)))))
 
-(defconst org-slideboard--spec-snippet-regexp "@@b\\(?:eamer\\)?:\\(<[^@\n]*>\\)@@"
+(defconst org-slideboard--spec-snippet-regexp "@@b\\(?:eamer\\)?:\\(<[^>\n]*>\\)@@"
   "Regexp for an export snippet holding a beamer overlay specification.")
 
 (defun org-slideboard--item-spec (item)
@@ -816,8 +824,7 @@ to the list of (BEG END SPEC), and `org-slideboard--steps'."
                         (if (string-prefix-p "<" (string-trim act))
                             act
                           (concat "<" (string-trim act) ">"))
-                        (equal (downcase (or (org-entry-get nil "BEAMER_ENV") ""))
-                               "invisibleenv"))
+                        (downcase (or (org-entry-get nil "BEAMER_ENV") "")))
                   events)))))
     ;; list items
     (org-element-map (org-element-parse-buffer) 'item
@@ -848,8 +855,11 @@ to the list of (BEG END SPEC), and `org-slideboard--steps'."
                           step))
                   (spec (org-slideboard--parse-overlay-spec string (or plus step))))
              (when spec
-               (when (car rest)
+               ;; the environment of a heading
+               (when (equal (car rest) "invisibleenv")
                  (setq spec (plist-put spec :invert (not (plist-get spec :invert)))))
+               (when (member (car rest) '("onlyenv" "visibleenv" "invisibleenv"))
+                 (setq spec (plist-put spec :hide t)))
                (setq steps (max steps (org-slideboard--spec-max spec)))
                (push (list beg end spec) reveals))))))
       (setq org-slideboard--reveals (nreverse reveals)
@@ -880,7 +890,8 @@ such as @@beamer:<2->@@ are hidden."
           (spec (nth 2 r)))
       (when (< b e)
         (cond ((not (org-slideboard--spec-visible-p spec org-slideboard--step))
-               (if (eq org-slideboard--slide-covered 'transparent)
+               (if (and (eq org-slideboard--slide-covered 'transparent)
+                        (not (plist-get spec :hide)))
                    (org-slideboard--look-region b e 'org-slideboard-covered 50)
                  (org-slideboard--hide-region b e)))
               ((org-slideboard--spec-alert-p spec org-slideboard--step)
