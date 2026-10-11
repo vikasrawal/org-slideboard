@@ -347,11 +347,75 @@ page: LaTeX line breaks and commands are removed and macros expanded.  The
 strip uses the face =org-slideboard-footline= (grey, a little smaller than
 the text) and is not changed by the size keys.
 
+** Header
+A heading tagged =:header:= is shown above the title of every slide.  It
+is written like a slide: its beamer columns are the left, centre and
+right parts of the header, and they can have formatted text, macros and
+images.  Tag it =:noexport:= as well, so the beamer export leaves it out.
+
+#+begin_example
+,* Header                                                    :header:noexport:
+,** Left                                                               :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.3
+:END:
+[[file:logo.png]]
+,** Centre                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.4
+:END:
+,#+begin_center
+,*Food Balance Sheets*, {{{date}}}
+,#+end_center
+,** Right                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.3
+:END:
+,#+begin_flushright
+/Rome, 2026/
+,#+end_flushright
+#+end_example
+
+- The parts are laid out like beamer columns: each starts at the left of
+  its share of the width (its =BEAMER_col= value), and its lines can be
+  centred in it with =#+begin_center= or put flush right with
+  =#+begin_flushright=, which beamer understands too.  A part wider than
+  its share pushes the next one to the right.  A header without columns is
+  one part, the whole width.
+- A percentage width on an image (=#+ATTR_ORG: :width 20%=) is a share of
+  its part, and images are kept within their part.
+- A =\vspace{0.5cm}= line in a part adds blank space there, e.g. below the
+  text to leave room above the slide title (see [[*Vertical space][Vertical space]]); blank
+  lines at the end of a part are dropped.  Other raw LaTeX lines are left
+  out of the header.
+- The header is as high as its content, up to =org-slideboard-header-height=
+  (0.15) of the frame; images are scaled to fit.  An =#+ATTR_ORG: :height 40=
+  line above an image in the header sets its size.  Its text size is
+  =org-slideboard-header-text-scale= (0).
+- Its look is the face =org-slideboard-header=, which is the default face of
+  the header: a =:background= gives a band of colour across the slide.  The
+  beautify modes of the slides (e.g. =variable-pitch-mode=) apply to it too.
+- The header is shown on the slides and on the section pages.  A slide, or
+  a section with all its slides, with the property =SLIDEBOARD_HEADER= set
+  to =nil= has no header.  The title page has none.
+- The tag is =org-slideboard-header-tag=.
+
 ** Images
 Image links (=[[file:plot.png]]=) are drawn by org-slideboard with their own
 overlays.  Each image is scaled down to at most
 =org-slideboard-image-width-fraction= of the window width and
 =org-slideboard-image-height-fraction= of its height.
+
+An =#+ATTR_ORG:= line above an image sets its own size, with =:width= or
+=:height= in pixels or as a percentage of the window; the limits above
+still apply.  It can come before or after other attribute lines such as
+=#+ATTR_LATEX:= or =#+RESULTS:=, so the beamer export keeps its own size:
+
+#+begin_example
+,#+ATTR_ORG: :width 60%
+,#+ATTR_LATEX: :width 0.5\textwidth
+[[file:plot.png]]
+#+end_example
 
 This does not depend on =org-image-actual-width= or other inline image
 settings.  An image
@@ -644,6 +708,27 @@ julia-repl package:
 Line breaks inside a paragraph are displayed as spaces, so hard-wrapped
 source text is rewrapped to the column width.  The file is not changed.
 
+** Vertical space
+A =\vspace{1cm}= line (on its own, or as =#+BEAMER: \vspace{1cm}= or
+=#+LATEX: \vspace{1cm}=) is shown as blank space of that height, so the
+same line adds space on the slide and in the beamer PDF:
+
+#+begin_example
+First paragraph.
+
+\vspace{1cm}
+
+Second paragraph, 1cm lower.
+#+end_example
+
+The space takes the place of the blank lines around it, which in beamer
+only end the paragraphs.  Lengths in =cm=, =mm=, =in=, =pt=, =em=, =ex= and
+=\baselineskip= are converted as on a beamer slide with 11pt text (a line
+is about 0.48cm), in lines of the slide's text, so the space grows with
+the text size.  A negative =\vspace=, often used to pull content up in
+beamer, is hidden.  Plain blank lines also show as blank lines on a
+slide, but beamer ignores more than one.
+
 ** Margins
 By default the text runs from one edge of the frame to the other.
 =org-slideboard-margins= leaves blank space at the left and right of the
@@ -779,7 +864,8 @@ When =org-slideboard-hide-clutter= is non-nil, the following are hidden:
   blocks with =:exports none=; results, such as plots, stay visible
 - =slideboard-elisp= blocks
 - standalone raw LaTeX lines such as =\vspace{-0.5cm}= (but not the lines
-  of equations, such as =\begin{equation}=)
+  of equations, such as =\begin{equation}=), and =#+BEAMER:= and =#+LATEX:=
+  lines; a positive =\vspace= is shown as space (see [[*Vertical space][Vertical space]])
 - blank lines left at the top of a column
 - the =:slide:= tag
 
@@ -890,6 +976,8 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =title-page=        | =org-slideboard-title-page=                           | =t= / =nil=                           |
 | =section-pages=     | =org-slideboard-section-pages=                        | =t= / =nil=                           |
 | =animate=           | =org-slideboard-animate-pages=                        | =t= / =nil=                           |
+| =header-height=     | =org-slideboard-header-height=                        | number                                |
+| =header-scale=      | =org-slideboard-header-text-scale=                    | number                                |
 | =export-steps=      | =org-slideboard-export-steps=                         | =all= / =last=                        |
 | =page-scale=        | =org-slideboard-page-text-scale=                      | number                                |
 | =text-scale=        | =org-slideboard-text-scale=                           | number                                |

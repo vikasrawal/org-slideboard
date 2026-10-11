@@ -16,6 +16,29 @@
 # PgDn and PgUp move between slides; M-ESC q stops.  It also exports to
 # a beamer PDF with C-c C-e l P.
 
+* Header                                                    :header:noexport:
+# Shown above the title of every slide; noexport keeps it out of beamer.
+** Left                                                               :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.3
+:END:
+*org-slideboard*
+** Centre                                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.4
+:END:
+#+begin_center
+/Live presentations inside Emacs/
+#+end_center
+** Right                                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.3
+:END:
+#+begin_flushright
+#+ATTR_ORG: :height 40
+[[file:demo-plot.svg]]
+#+end_flushright
+
 * Getting started
 
 ** What org-slideboard does                                           :slide:
@@ -148,6 +171,22 @@ Any other text is shown as it is, and =%%= is a =%=.
 removes it.  In your configuration, =org-slideboard-footline= can also hold
 functions, e.g. one that shows the time.
 
+** A header on every slide                                           :slide:
+:PROPERTIES:
+:SLIDEBOARD_HEADER: nil
+:END:
+The strip above the titles is the heading tagged =:header:= at the top of
+this file.  It is laid out like a slide: its beamer columns are the left,
+centre and right parts, and they can have formatted text, macros and
+images.
+
++ Tag it =:noexport:= too, so beamer leaves it out.
++ =org-slideboard-header-height= is the most it may take of the frame.
++ The face =org-slideboard-header= sets its look; a =:background= gives a
+  band of colour.
++ This slide has the property =SLIDEBOARD_HEADER= set to =nil=, so it has
+  no header.
+
 * Text
 
 ** Text size                                                          :slide:
@@ -271,6 +310,11 @@ as LaTeX would do.
 
 A blank line still starts a new paragraph.
 
+\vspace{1cm}
+
+A =\vspace{1cm}= line between paragraphs, as above, adds that much space,
+on the slide and in the beamer PDF.
+
 ** Clutter is hidden                                                  :slide:
 :PROPERTIES:
 :NOTE: property drawers are hidden
@@ -328,6 +372,7 @@ alignment; tables are re-aligned.
 ;; the plot is made on the slide "Results only, with a plot"
 #+end_src
 
+#+ATTR_ORG: :width 60%
 #+RESULTS:
 [[file:demo-plot.svg]]
 
@@ -354,6 +399,9 @@ and start the show again.  Use 1.0 to let images fill their windows.  The
 setting applies to all slides; to set it for every presentation, set
 =org-slideboard-image-width-fraction= and
 =org-slideboard-image-height-fraction= in your configuration.
+
+A line =#+ATTR_ORG: :width 60%= above an image (as here) sets its own
+size, in pixels or as a percentage of the window, within those limits.
 
 An image file that has changed, e.g. a plot rewritten by a code block, is
 read again when the slide is shown again.

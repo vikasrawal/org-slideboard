@@ -494,6 +494,37 @@ See `org-slideboard-footline'."
   "Face of the information strip, see `org-slideboard-footline'."
   :group 'org-slideboard)
 
+(defcustom org-slideboard-header-tag "header"
+  "Tag of the heading whose content is shown above the title of every slide.
+The header is laid out like a slide: beamer columns (children with a
+BEAMER_col property or the BMCOL tag) give its left, centre and right
+parts, and it can have formatted text, images and macros.  Tag it
+noexport as well (:header:noexport:) to leave it out of the beamer
+export.  The header is shown on the slides and the section pages; a
+slide or section with the property SLIDEBOARD_HEADER set to nil has
+none, and neither has the title page."
+  :type 'string
+  :group 'org-slideboard)
+
+(defcustom org-slideboard-header-height 0.15
+  "Most of the frame height the header may take, as a fraction.
+The header is as high as its content, up to this; images in it are
+scaled to fit.  See `org-slideboard-header-tag'."
+  :type 'number
+  :group 'org-slideboard)
+
+(defcustom org-slideboard-header-text-scale 0
+  "Text scale of the header, see `org-slideboard-header-tag'."
+  :type 'number
+  :group 'org-slideboard)
+
+(defface org-slideboard-header
+  '((t))
+  "Face of the header, see `org-slideboard-header-tag'.
+It is the default face of the header windows, so a :background gives
+a band of colour across the slide."
+  :group 'org-slideboard)
+
 (defconst org-slideboard--footline-buffer "*org-slideboard-footline*"
   "Buffer for the information strip.")
 
@@ -554,6 +585,51 @@ This is where the settings are read, since they may be local to it."
     (overlay-put ov 'evaporate t)
     (push ov org-slideboard--hide-overlays)))
 
+(defun org-slideboard--vspace-lines (string)
+  "Return the height of the \\vspace in STRING, in lines of text, or nil.
+The lengths are converted as on a beamer slide with 11pt text, where a
+line is about 0.48cm: cm, mm, in, pt, em, ex and \\baselineskip are
+understood, e.g. \\vspace{1cm} or \\vspace*{2\\baselineskip}."
+  (when (string-match
+         "\\\\vspace\\*?{[ \t]*\\(-?[0-9.]*\\)[ \t]*\\(cm\\|mm\\|in\\|pt\\|em\\|ex\\|\\\\baselineskip\\)[ \t]*}"
+         string)
+    (let ((n (if (string-empty-p (match-string 1 string))
+                 1
+               (string-to-number (match-string 1 string)))))
+      (* n (pcase (match-string 2 string)
+             ("cm" (/ 1 0.48))
+             ("mm" (/ 1 4.8))
+             ("in" (/ 2.54 0.48))
+             ("pt" (/ 1 13.6))
+             ("em" 0.8)
+             ("ex" 0.35)
+             (_ 1.0))))))
+
+(defun org-slideboard--hide-or-space (beg end)
+  "Hide the line from BEG to END, or show it as space if it is a \\vspace.
+A line with a positive \\vspace is shown as blank space of that height
+(see `org-slideboard--vspace-lines'), in units of the line height, so it
+grows with the text; a negative one is hidden like other clutter."
+  (let ((lines (org-slideboard--vspace-lines (buffer-substring-no-properties beg end))))
+    (if (and lines (> lines 0))
+        (let ((ov (make-overlay beg (save-excursion (goto-char beg) (line-end-position))
+                                nil t nil)))
+          ;; one pixel wide: Emacs ignores the height of an empty space
+          ;; when lines are truncated
+          (overlay-put ov 'display `(space :width (1) :height (,lines . height)))
+          (overlay-put ov 'evaporate t)
+          (push ov org-slideboard--hide-overlays)
+          ;; it takes the place of the blank lines around it, which in
+          ;; beamer only end the paragraphs
+          (save-excursion
+            (goto-char beg)
+            (when (and (zerop (forward-line -1)) (looking-at "[ \t]*\n"))
+              (org-slideboard--hide-region (match-beginning 0) (match-end 0)))
+            (goto-char beg)
+            (when (and (zerop (forward-line 1)) (looking-at "[ \t]*\n"))
+              (org-slideboard--hide-region (match-beginning 0) (match-end 0)))))
+      (org-slideboard--hide-region beg end))))
+
 (defun org-slideboard--hide-clutter (beg end)
   "Hide beamer and babel clutter between BEG and END."
   (when org-slideboard-hide-clutter
@@ -569,12 +645,13 @@ This is where the settings are read, since they may be local to it."
               ;; a stray :END: line, not the start of a drawer
               (goto-char (1+ (match-beginning 0)))
             (org-slideboard--hide-region (match-beginning 0) (match-end 0))))
-        ;; keyword lines
+        ;; keyword lines; #+BEAMER: and #+LATEX: lines with a \vspace
+        ;; are shown as that space
         (goto-char beg)
         (while (re-search-forward
-                "^[ \t]*#\\+\\(?:name\\|results\\|caption\\|beamer\\|attr_[a-z]+\\)\\(?:\\[.*\\]\\)?:.*\n?"
+                "^[ \t]*#\\+\\(?:name\\|results\\|caption\\|beamer\\|latex\\|attr_[a-z]+\\)\\(?:\\[.*\\]\\)?:.*\n?"
                 end t)
-          (org-slideboard--hide-region (match-beginning 0) (match-end 0)))
+          (org-slideboard--hide-or-space (match-beginning 0) (match-end 0)))
         ;; standalone raw LaTeX lines, e.g. \vspace{-0.5cm}, but not
         ;; lines of an equation
         (goto-char beg)
@@ -585,7 +662,7 @@ This is where the settings are read, since they may be local to it."
                        (org-element-context
                         (progn (goto-char (match-beginning 1))
                                (org-element-at-point))))))
-            (org-slideboard--hide-region (match-beginning 0) (match-end 0))))
+            (org-slideboard--hide-or-space (match-beginning 0) (match-end 0))))
         ;; src blocks that are not exported as code
         (goto-char beg)
         (while (re-search-forward "^[ \t]*#\\+begin_src\\b" end t)
@@ -928,11 +1005,44 @@ was last shown, it is removed from the image cache."
       (clear-image-cache file))
     (puthash file time org-slideboard--image-times)))
 
+(defun org-slideboard--image-size (string)
+  "Return the size in an #+ATTR_ORG: line, as (WIDTH . HEIGHT), or nil.
+STRING is the value of the line, e.g. \":width 200\" or \":height 30%\".
+Each of WIDTH and HEIGHT is a number of pixels, a float for a share
+of the window (from a percentage), or nil."
+  (let ((get (lambda (key)
+               (when (string-match (concat ":" key "[ \t]+\\([0-9.]+\\)\\(%\\|px\\)?") string)
+                 (let ((n (string-to-number (match-string 1 string))))
+                   (if (equal (match-string 2 string) "%") (/ n 100.0) (round n)))))))
+    (let ((w (funcall get "width"))
+          (h (funcall get "height")))
+      (and (or w h) (cons w h)))))
+
+(defun org-slideboard--image-size-above (pos)
+  "Return the size from the #+ATTR_ORG: line just above POS, or nil.
+Other attribute lines, such as #+ATTR_LATEX:, #+RESULTS: or #+NAME:,
+may come between.  See
+`org-slideboard--image-size'."
+  (save-excursion
+    (goto-char pos)
+    (let ((size nil)
+          (case-fold-search t))
+      (while (and (not size)
+                  (not (bobp))
+                  (progn (forward-line -1)
+                         (looking-at "[ \t]*#\\+\\(attr_[a-z]+\\|results\\|name\\|caption\\)\\(?:\\[.*\\]\\)?:\\(.*\\)$")))
+        (when (equal (downcase (match-string 1)) "attr_org")
+          (setq size (org-slideboard--image-size (match-string 2)))))
+      size)))
+
 (defun org-slideboard--show-images (&optional win)
   "Display image links in the accessible part of the current buffer.
 Images are scaled down to fit in window WIN (default: the selected
 window), using `org-slideboard-image-width-fraction' and
-`org-slideboard-image-height-fraction'.  The images are drawn with our own
+`org-slideboard-image-height-fraction'.  An #+ATTR_ORG: line above an
+image with :width or :height, in pixels or as a percentage of the
+window, sets its size, within those limits; see
+`org-slideboard--image-size'.  The images are drawn with our own
 high-priority overlays, so they do not depend on (and override) the
 Org inline image settings.  Image files that changed since
 they were last shown are read again."
@@ -946,10 +1056,23 @@ they were last shown are read again."
           (when (and (string-match-p (image-file-name-regexp) file)
                      (file-exists-p file))
             (org-slideboard--fresh-image-file file)
-            (let ((ov (make-overlay (match-beginning 0) (match-end 0) nil t nil)))
-              (overlay-put ov 'display (create-image file nil nil
-                                                     :max-width max-w
-                                                     :max-height max-h))
+            (let* ((beg (match-beginning 0))
+                   (end (match-end 0))
+                   (size (or (get-text-property beg 'org-slideboard-image-size)
+                             (save-match-data
+                               (org-slideboard--image-size-above (line-beginning-position)))))
+                   ;; in the header, images are sized to their part
+                   (share (or (get-text-property beg 'org-slideboard-share) 1))
+                   (px (lambda (v whole) (cond ((floatp v) (floor (* v whole)))
+                                               ((integerp v) v))))
+                   (w (funcall px (car size) (* share (window-body-width win t))))
+                   (h (funcall px (cdr size) (window-body-height win t)))
+                   (ov (make-overlay beg end nil t nil)))
+              (overlay-put ov 'display (apply #'create-image file nil nil
+                                              :max-width (floor (* share max-w))
+                                              :max-height max-h
+                                              (append (and w (list :width w))
+                                                      (and h (list :height h)))))
               (overlay-put ov 'priority 1000)
               ;; the link's underline would be drawn across the image
               (overlay-put ov 'face '(:underline nil :inherit default))
@@ -984,7 +1107,15 @@ Display equations (\\=\\[...\\] and $$...$$) keep their own lines."
                          (not (cl-some (lambda (m)
                                          (and (<= (match-beginning 0) (cdr m))
                                               (>= (match-end 0) (car m))))
-                                       math)))
+                                       math))
+                         ;; a \vspace line keeps its own line, as space
+                         (not (save-excursion
+                                (save-match-data
+                                  (or (progn (goto-char (match-end 0))
+                                             (looking-at-p "\\\\vspace"))
+                                      (progn (goto-char (match-beginning 0))
+                                             (beginning-of-line)
+                                             (looking-at-p "[ \t]*\\\\vspace")))))))
                 (let ((ov (make-overlay (match-beginning 0) (match-end 0) nil t nil)))
                   (overlay-put ov 'display " ")
                   (push ov org-slideboard--hide-overlays))))))))))
@@ -1341,6 +1472,8 @@ I is the column index, used to name the indirect buffer."
       (setq-local face-remapping-alist nil)
       (setq-local text-scale-mode-remapping nil)
       (setq-local text-scale-mode-amount 0)
+      ;; blanks at the ends of lines, or a \vspace line, are not marked
+      (setq-local show-trailing-whitespace nil)
       (widen)
       (if (fboundp 'org-fold-show-all) (org-fold-show-all) (outline-show-all))
       (narrow-to-region (nth 2 col) (nth 3 col))
@@ -1441,6 +1574,7 @@ and `org-slideboard-footline'.  WIN keeps the rest of its space."
           (erase-buffer)
           (setq-local cursor-type nil
                       truncate-lines t
+                      show-trailing-whitespace nil
                       buffer-read-only t)
           (org-slideboard-keys-mode 1)
           (let ((left (propertize (or (nth 0 parts) "") 'face 'org-slideboard-footline))
@@ -1460,6 +1594,231 @@ and `org-slideboard-footline'.  WIN keeps the rest of its space."
         (fit-window-to-buffer strip nil 1))
       (org-slideboard--align-footline strip)
       strip)))
+
+(defun org-slideboard--header-columns ()
+  "Return the parts of the header, like `org-slideboard--slide-columns'.
+That is the beamer columns of the first heading with
+`org-slideboard-header-tag', or its body as one part when it has no
+columns.  Return nil if there is no such heading."
+  (org-with-wide-buffer
+   (goto-char (point-min))
+   (let ((re (format "^\\*+ .*:%s:" (regexp-quote org-slideboard-header-tag)))
+         (case-fold-search nil)
+         (found nil))
+     (while (and (not found) (re-search-forward re nil t))
+       (beginning-of-line)
+       (if (and (member org-slideboard-header-tag (org-get-tags nil t))
+                (not (org-in-commented-heading-p)))
+           (setq found (point))
+         (end-of-line)))
+     (when found
+       (or (org-slideboard--slide-columns)
+           (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+                 (body (save-excursion (org-end-of-meta-data t) (point))))
+             (when (< body end)
+               (list (list 1.0 found (min body end) end)))))))))
+
+(defconst org-slideboard--header-buffer "*org-slideboard-header*"
+  "Buffer of the header, see `org-slideboard-header-tag'.")
+
+(defun org-slideboard--header-lines (col templates share)
+  "Return the lines of header part COL, with macros expanded by TEMPLATES.
+COL is from `org-slideboard--header-columns', and SHARE its share of
+the width.  Comment and keyword lines, and blank lines around the
+text, are left out, and so are lines of raw LaTeX, except that a
+\\vspace line (on its own, or after #+BEAMER: or #+LATEX:) becomes a
+blank line of that height, see `org-slideboard--vspace-lines'.  Lines in
+a #+begin_center or #+begin_flushright block get the text property
+`org-slideboard-align' (center or right);
+every line gets `org-slideboard-share', for the size of its images,
+see `org-slideboard--show-images'."
+  (let ((text (org-with-wide-buffer
+               (buffer-substring-no-properties (nth 2 col) (nth 3 col))))
+        (size nil)
+        (align nil)
+        (lines '())
+        (case-fold-search t))
+    (dolist (line (split-string (string-trim text) "\n"))
+      (cond
+       ;; an image size for the next line, see `org-slideboard--show-images'
+       ((string-match "\\`[ \t]*#\\+attr_org:\\(.*\\)" line)
+        (setq size (org-slideboard--image-size (match-string 1 line))))
+       ((string-match "\\`[ \t]*#\\+begin_\\(center\\|flushright\\|flushleft\\)\\b" line)
+        (setq align (cdr (assoc (downcase (match-string 1 line))
+                                '(("center" . center) ("flushright" . right))))))
+       ((string-match-p "\\`[ \t]*#\\+end_\\(center\\|flushright\\|flushleft\\)\\b" line)
+        (setq align nil))
+       ;; \vspace: a blank line of that height
+       ((and (string-match-p "\\`[ \t]*\\(?:#\\+\\(?:beamer\\|latex\\):[ \t]*\\)?\\\\vspace" line)
+             (> (or (org-slideboard--vspace-lines line) 0) 0))
+        ;; drawn as space by `org-slideboard--show-header', after Org's
+        ;; fontification, which would remove a display property here
+        (push (propertize " " 'org-slideboard-vspace (org-slideboard--vspace-lines line))
+              lines))
+       ;; other keyword, comment and raw LaTeX lines
+       ((string-match-p "\\`[ \t]*\\(?:#\\|\\\\[a-zA-Z]\\)" line))
+       (t
+        (let ((l (string-trim
+                  (org-slideboard--expand-macros-in-string
+                   (org-slideboard--strip-snippets line) templates))))
+          (setq l (propertize l 'org-slideboard-share share))
+          (when align
+            (put-text-property 0 (length l) 'org-slideboard-align align l))
+          (when size
+            (put-text-property 0 (length l) 'org-slideboard-image-size size l)
+            (setq size nil))
+          (push l lines)))))
+    (setq lines (nreverse lines))
+    ;; blank lines around the text
+    (while (and lines (string-empty-p (car lines))) (pop lines))
+    (setq lines (nreverse lines))
+    (while (and lines (string-empty-p (car lines))) (pop lines))
+    (nreverse lines)))
+
+(defun org-slideboard--show-header (win &optional pos)
+  "Split the header off the top of window WIN; return its window, or nil.
+The current buffer is the presentation buffer.  POS is the heading of
+the slide or section page (default: the start of the accessible part,
+the slide), which has no header if its SLIDEBOARD_HEADER property (or
+that of a heading above it) is nil.  The parts of the header are laid out like
+beamer columns, on the same lines: each starts at the left of its
+share of the width, or is centred or flush right in it, see
+`org-slideboard--align-header' and `org-slideboard-header-tag'."
+  (let* ((pos (or pos (point-min)))
+         (off (equal "nil" (org-with-wide-buffer
+                            ;; literally: Org reads a value of nil as none
+                            (org-entry-get pos "SLIDEBOARD_HEADER" t t))))
+         (cols (and (not off) (org-slideboard--header-columns))))
+    (when cols
+      (let* ((templates (org-slideboard--macro-templates))
+             (total (apply #'+ (mapcar #'car cols)))
+             (shares (mapcar (lambda (c) (/ (car c) (float total))) cols))
+             (parts (cl-mapcar (lambda (c sh) (org-slideboard--header-lines c templates sh))
+                               cols shares))
+             (n (apply #'max (mapcar #'length parts)))
+             (scale org-slideboard-header-text-scale)
+             (hide-markers org-slideboard-hide-emphasis-markers)
+             ;; the presentation's settings, which may be local to it
+             (modes org-slideboard-beautify-modes)
+             (disable org-slideboard-disable-modes)
+             (dir default-directory)
+             (window-min-height 1)
+             (lines (max 1 (floor (* org-slideboard-header-height (frame-height)))))
+             (w (split-window win (- lines) 'above))
+             (buf (get-buffer-create org-slideboard--header-buffer)))
+        (with-current-buffer buf
+          (let ((inhibit-read-only t))
+            (unless (derived-mode-p 'org-mode)
+              (delay-mode-hooks (org-mode)))
+            (mapc #'delete-overlay (overlays-in (point-min) (point-max)))
+            (erase-buffer)
+            (setq default-directory dir)
+            (setq-local org-hide-emphasis-markers hide-markers
+                        cursor-type nil
+                        truncate-lines t
+                        auto-hscroll-mode nil
+                        ;; lines of spacers only, e.g. for a \vspace
+                        show-trailing-whitespace nil)
+            (dotimes (i n)
+              (let ((k 0))
+                (dolist (p parts)
+                  ;; before every part: it is placed by its width
+                  (insert (propertize " " 'org-slideboard-spacer (1+ k)))
+                  (insert (or (nth i p) ""))
+                  (setq k (1+ k))))
+              (when (< i (1- n)) (insert "\n")))
+            (setq buffer-read-only t))
+          ;; the look of the slides, afresh: the face remapping is reset
+          (setq-local face-remapping-alist nil)
+          (kill-local-variable 'buffer-face-mode)
+          (setq org-slideboard--beautified nil)
+          (let ((org-slideboard-beautify-modes modes)
+                (org-slideboard-disable-modes disable)
+                (org-slideboard-hide-emphasis-markers hide-markers))
+            (org-slideboard--beautify))
+          (font-lock-ensure)
+          ;; \vspace lines, see `org-slideboard--header-lines'
+          (let ((p (point-min)))
+            (while (setq p (text-property-not-all p (point-max) 'org-slideboard-vspace nil))
+              (let ((ov (make-overlay p (1+ p) nil t nil)))
+                (overlay-put ov 'display
+                             `(space :width (1) :height
+                                     (,(get-text-property p 'org-slideboard-vspace) . height)))
+                (push ov org-slideboard--hide-overlays))
+              (setq p (1+ p))))
+          (face-remap-add-relative 'default 'org-slideboard-header)
+          (let ((org-slideboard--scaling t))
+            (text-scale-set scale))
+          (org-slideboard-keys-mode 1))
+        (set-window-buffer w buf)
+        (set-window-dedicated-p w t)
+        (set-window-parameter w 'no-other-window t)
+        (org-slideboard--hide-mode-line w)
+        (org-slideboard--apply-margins w)
+        (with-current-buffer buf
+          (let ((inhibit-read-only t))
+            (org-slideboard--show-images w)))
+        (org-slideboard--align-header w shares)
+        (with-current-buffer buf (goto-char (point-min)))
+        (set-window-point w 1)
+        (set-window-hscroll w 0)
+        (set-window-start w 1)
+        w))))
+
+(defun org-slideboard--align-header (win shares)
+  "Place the parts of each line of the header in WIN, like beamer columns.
+SHARES are the parts' shares of the width.  A part starts at the left
+of its share, or is centred or flush right in it if its text has the
+property `org-slideboard-align' (from #+begin_center or
+#+begin_flushright, see `org-slideboard--header-lines').  A part wider
+than its share pushes the next one to the right."
+  (with-current-buffer (window-buffer win)
+    (let ((inhibit-read-only t)
+          (width (window-body-width win t))
+          (m (length shares)))
+      (save-excursion
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let* ((bol (point))
+                 (eol (line-end-position))
+                 (spacers '())
+                 (p bol))
+            (while (setq p (text-property-not-all p eol 'org-slideboard-spacer nil))
+              (push p spacers)
+              (setq p (1+ p)))
+            (setq spacers (nreverse spacers))
+            (let ((k 0)
+                  (prev-end 0))
+              (dolist (sp spacers)
+                (let* ((beg (1+ sp))
+                       (end (or (nth (1+ k) spacers) eol))
+                       (seg (if (< beg end) (car (window-text-pixel-size win beg end)) 0))
+                       (start (* width (apply #'+ (seq-take shares k))))
+                       (col (* width (nth k shares)))
+                       (align (and (< beg end) (get-text-property beg 'org-slideboard-align)))
+                       (x (pcase align
+                            ('center (+ start (/ (- col seg) 2.0)))
+                            ;; a little short of the edge, where Emacs
+                            ;; would show a truncation mark
+                            ('right (- (+ start col) seg (if (= k (1- m)) 2 0)))
+                            (_ start)))
+                       (x (max x (if (> k 0) (+ prev-end 8) 0))))
+                  (put-text-property sp (1+ sp) 'display `(space :align-to (,(round x))))
+                  (setq prev-end (if (> seg 0) (+ x seg) prev-end)
+                        k (1+ k)))))
+            (forward-line 1)))))))
+
+(defun org-slideboard--fit-header (win)
+  "Make the header in WIN as high as its content.
+It is at most `org-slideboard-header-height' of the frame."
+  (when (window-live-p win)
+    (let* ((need (cdr (window-text-pixel-size win)))
+           (most (floor (* org-slideboard-header-height (frame-pixel-height))))
+           (delta (- (min need most) (window-body-height win t)))
+           (window-min-height 1)
+           (window-resize-pixelwise t))
+      (unless (zerop delta)
+        (ignore-errors (window-resize win delta nil nil t))))))
 
 (defun org-slideboard--align-footline (win)
   "Centre the middle part of the information strip in WIN, right-align the last.
@@ -1513,12 +1872,15 @@ must be the base buffer, narrowed to the slide."
                      (list 1.0 meta-end meta-end first-col)))
          ;; strips of one or two lines: Emacs would keep windows 4 high
          (window-min-height 1)
-         (strip nil))
+         (strip nil)
+         (header nil))
     ;; a window kept from the previous slide keeps its parameters
     (dolist (w (window-list))
       (set-window-parameter w 'org-slideboard-share nil))
     ;; the information strip first, so the slide gets the rest
     (setq strip (org-slideboard--show-footline title-win))
+    ;; the header above the title
+    (setq header (org-slideboard--show-header title-win))
     ;; the title strip
     (narrow-to-region (point-min) title-end)
     (let ((org-slideboard--scaling t))
@@ -1576,6 +1938,7 @@ must be the base buffer, narrowed to the slide."
     (when (window-live-p strip)
       (fit-window-to-buffer strip nil 1)
       (org-slideboard--align-footline strip))
+    (org-slideboard--fit-header header)
     (select-window title-win)
     ;; keep point on the heading: at the end of a hidden drawer below it,
     ;; the strip would scroll to show point and the heading would be lost
@@ -1613,7 +1976,8 @@ must be the base buffer, narrowed to the slide."
                org-slideboard-page-text-scale org-slideboard-image-width-fraction
                org-slideboard-image-height-fraction org-slideboard-list-indent
                org-slideboard-latex-size org-slideboard-latex-scale
-               org-slideboard-src-code-width))
+               org-slideboard-src-code-width org-slideboard-header-height
+               org-slideboard-header-text-scale))
   (put var 'safe-local-variable #'numberp))
 (put 'org-slideboard-src-display 'safe-local-variable #'org-slideboard--src-display-p)
 (put 'org-slideboard-src-split 'safe-local-variable #'org-slideboard--src-split-p)
@@ -1681,6 +2045,8 @@ Parts that are functions can only be set in the configuration."
     ("title-page" org-slideboard-title-page booleanp)
     ("section-pages" org-slideboard-section-pages booleanp)
     ("animate" org-slideboard-animate-pages booleanp)
+    ("header-height" org-slideboard-header-height numberp)
+    ("header-scale" org-slideboard-header-text-scale numberp)
     ("export-steps" org-slideboard-export-steps org-slideboard--export-steps-p)
     ("page-scale" org-slideboard-page-text-scale numberp)
     ("text-scale" org-slideboard-text-scale numberp)
@@ -2498,10 +2864,12 @@ These are the ancestors without the slide tag, outermost first."
   (move-to-column hpos t)
   (insert text))
 
-(defun org-slideboard--show-page (lines scale animate)
+(defun org-slideboard--show-page (lines scale animate &optional header-pos)
   "Show LINES, a list of (TEXT . FACE), centred on a page of their own.
 SCALE is the text scale.  With ANIMATE, the lines are animated in; a
-key press skips the rest of the animation."
+key press skips the rest of the animation.  With HEADER-POS, a heading
+in the presentation buffer, the header is shown above the page, see
+`org-slideboard--show-header'."
   (org-slideboard--teardown-columns)
   (delete-other-windows)
   (switch-to-buffer (get-buffer-create org-slideboard--page-buffer))
@@ -2513,6 +2881,12 @@ key press skips the rest of the animation."
   (org-slideboard--disable-modes)
   (setq-local indent-tabs-mode nil)
   (org-slideboard--hide-mode-line (selected-window))
+  (when header-pos
+    (let ((page-win (selected-window)))
+      (org-slideboard--fit-header
+       (with-current-buffer (org-slideboard--show-buffer)
+         (org-slideboard--show-header page-win header-pos)))
+      (select-window page-win)))
   (let ((org-slideboard--scaling t))
     (text-scale-set (or scale 5)))
   (let* ((cols (window-max-chars-per-line))
@@ -2538,7 +2912,7 @@ key press skips the rest of the animation."
 
 (defun org-slideboard--show-special (entry n)
   "Show the title or section page ENTRY, which is slide N."
-  (let (lines scale animate)
+  (let (lines scale animate header-pos)
     ;; read everything in the presentation buffer, where the settings
     ;; may be buffer-local (file-local variables, #+SLIDEBOARD:)
     (with-current-buffer (org-slideboard--show-buffer)
@@ -2549,9 +2923,15 @@ key press skips the rest of the animation."
                       (:section (org-slideboard--section-lines (cadr entry))))
               scale org-slideboard-page-text-scale
               animate (and org-slideboard-animate-pages
-                           (not org-slideboard--exporting)))))
+                           (not org-slideboard--exporting)))
+        ;; section pages have the header of the slides
+        (when (eq (car entry) :section)
+          (setq header-pos (marker-position (cadr entry))
+                org-slideboard--slide-margins
+                (or (org-slideboard--margins-setting header-pos)
+                    org-slideboard-margins)))))
     (set-frame-name (format "%-180s%15s%s" (car (car lines)) "slide " n))
-    (org-slideboard--show-page lines scale animate)
+    (org-slideboard--show-page lines scale animate header-pos)
     (message "")))
 
 (defun org-slideboard--entry-title (entry)
@@ -2674,8 +3054,7 @@ See `org-slideboard--slide-reveals' for the steps."
     (widen)
     (if (<= (+ org-slideboard-current-slide-number 1) (length org-slideboard-slide-list))
         (org-slideboard-goto-slide (1+ org-slideboard-current-slide-number) 1)
-      (org-slideboard-goto-slide org-slideboard-current-slide-number)
-      (message "This is the end. My only friend the end.  Jim Morrison."))))
+      (org-slideboard-goto-slide org-slideboard-current-slide-number))))
 
 
 (defun org-slideboard-previous-slide ()
@@ -2691,8 +3070,7 @@ The previous slide is shown at its last step, as in a beamer PDF."
     (if (> (- org-slideboard-current-slide-number 1) 0)
         (org-slideboard-goto-slide (1- org-slideboard-current-slide-number)
                                    most-positive-fixnum)
-      (org-slideboard-goto-slide org-slideboard-current-slide-number)
-      (message "Once upon a time..."))))
+      (org-slideboard-goto-slide org-slideboard-current-slide-number))))
 
 
 (defun org-slideboard--setup-show ()
@@ -2870,6 +3248,8 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (when (get-buffer org-slideboard--page-buffer) (kill-buffer org-slideboard--page-buffer))
   (when (get-buffer org-slideboard--footline-buffer)
     (kill-buffer org-slideboard--footline-buffer))
+  (when (get-buffer org-slideboard--header-buffer)
+    (kill-buffer org-slideboard--header-buffer))
 
   (when org-slideboard-presentation-file (find-file org-slideboard-presentation-file))
   (widen)
