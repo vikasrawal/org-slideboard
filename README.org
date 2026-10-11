@@ -191,6 +191,7 @@ strip, the frames, and the title and section pages.
 | =M-ESC g= | go to slide number                       |
 | =M-ESC t= | table of contents                        |
 | =M-ESC q= | stop the presentation                    |
+| =M-ESC p= | save the slides as a PDF                 |
 | =M-ESC 0= | text and frame sizes back to the start   |
 
 They are not active in other buffers, such as a REPL, another file or the
@@ -252,6 +253,24 @@ nil.
 ** Table of contents
 =M-ESC t= lists all slides, including "Title page: …" and "Section: …"
 entries, as links.  Clicking a link goes to that slide; =q= closes the list.
+
+** Saving the slides as a PDF
+=M-x org-slideboard-export-pdf= (=M-ESC p= during the show) saves the
+presentation as a PDF, one page per slide, drawn exactly as it is shown:
+the columns, fonts, equations, and faded and highlighted steps.  Title and
+section pages are included, without the animation, and a slide built up
+in steps gets a page for each step, as in a beamer PDF; with
+=org-slideboard-export-steps= set to =last= (or =#+SLIDEBOARD:
+export-steps:last=), it gets only its last step.
+
+The pages are vector PDF, so the text stays sharp, and they have the size
+of the Emacs frame: make the frame the shape you want (e.g. full screen)
+first.  The show is started if it is not running, and stopped again at the
+end; otherwise it comes back to the slide it was on.
+
+This needs Emacs built with Cairo (=CAIRO= in
+=system-configuration-features=), and pdfunite (poppler), qpdf or
+Ghostscript to join the pages.
 
 ** Editing during the show
 The column windows show indirect buffers of the presentation file, narrowed
@@ -871,6 +890,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =title-page=        | =org-slideboard-title-page=                           | =t= / =nil=                           |
 | =section-pages=     | =org-slideboard-section-pages=                        | =t= / =nil=                           |
 | =animate=           | =org-slideboard-animate-pages=                        | =t= / =nil=                           |
+| =export-steps=      | =org-slideboard-export-steps=                         | =all= / =last=                        |
 | =page-scale=        | =org-slideboard-page-text-scale=                      | number                                |
 | =text-scale=        | =org-slideboard-text-scale=                           | number                                |
 | =title-scale=       | =org-slideboard-title-text-scale=                     | number                                |

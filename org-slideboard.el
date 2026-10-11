@@ -504,6 +504,9 @@ See `org-slideboard-footline'."
   "Whether flyspell mode is enabled at beginning of show.
 Used to reset the state after the show.")
 
+(defvar org-slideboard--exporting nil
+  "Non-nil while `org-slideboard-export-pdf' saves the slides.")
+
 (defvar org-slideboard--running nil
   "Flag for if the show is running.")
 
@@ -1678,6 +1681,7 @@ Parts that are functions can only be set in the configuration."
     ("title-page" org-slideboard-title-page booleanp)
     ("section-pages" org-slideboard-section-pages booleanp)
     ("animate" org-slideboard-animate-pages booleanp)
+    ("export-steps" org-slideboard-export-steps org-slideboard--export-steps-p)
     ("page-scale" org-slideboard-page-text-scale numberp)
     ("text-scale" org-slideboard-text-scale numberp)
     ("title-scale" org-slideboard-title-text-scale numberp)
@@ -2544,7 +2548,8 @@ key press skips the rest of the animation."
                       (:title (org-slideboard--title-lines))
                       (:section (org-slideboard--section-lines (cadr entry))))
               scale org-slideboard-page-text-scale
-              animate org-slideboard-animate-pages)))
+              animate (and org-slideboard-animate-pages
+                           (not org-slideboard--exporting)))))
     (set-frame-name (format "%-180s%15s%s" (car (car lines)) "slide " n))
     (org-slideboard--show-page lines scale animate)
     (message "")))
@@ -3086,6 +3091,97 @@ See `org-slideboard-increase-text-size'."
   (interactive)
   (org-slideboard--change-text-scale -1))
 
+;;** Export to PDF
+
+(defcustom org-slideboard-export-steps 'all
+  "Which steps of a slide `org-slideboard-export-pdf' saves.
+With `all', a slide built up in steps (see `org-slideboard--slide-reveals')
+gets a page for each step, as in beamer's PDF; with `last', only its
+last step.  It can be set for one file with #+SLIDEBOARD: export-steps:last."
+  :type '(choice (const :tag "Every step" all)
+                 (const :tag "The last step" last))
+  :group 'org-slideboard)
+
+(defun org-slideboard--export-steps-p (value)
+  "Return non-nil if VALUE is a valid `org-slideboard-export-steps'."
+  (memq value '(all last)))
+(put 'org-slideboard-export-steps 'safe-local-variable #'org-slideboard--export-steps-p)
+
+(defun org-slideboard--export-page (dir i)
+  "Save the frame, as shown now, as page I in directory DIR.
+Return the file name."
+  (message nil)
+  (redisplay t)
+  (let ((file (expand-file-name (format "page-%04d.pdf" i) dir)))
+    (let ((coding-system-for-write 'binary))
+      (write-region (x-export-frames nil 'pdf) nil file nil 'silent))
+    file))
+
+(defun org-slideboard--join-pdfs (files out)
+  "Join the PDF FILES into OUT, with pdfunite, qpdf or Ghostscript."
+  (let ((cmd (cond ((executable-find "pdfunite")
+                    `("pdfunite" ,@files ,out))
+                   ((executable-find "qpdf")
+                    `("qpdf" "--empty" "--pages" ,@files "--" ,out))
+                   ((executable-find "gs")
+                    `("gs" "-q" "-dNOPAUSE" "-dBATCH" "-sDEVICE=pdfwrite"
+                      ,(concat "-sOutputFile=" out) ,@files))
+                   (t (user-error "Joining the pages needs pdfunite, qpdf or gs")))))
+    (with-temp-buffer
+      (unless (eq 0 (apply #'call-process (car cmd) nil t nil (cdr cmd)))
+        (error "%s failed: %s" (car cmd) (string-trim (buffer-string)))))))
+
+(defun org-slideboard-export-pdf (file)
+  "Save the show as a PDF in FILE, one page per slide as it is shown.
+Title and section pages are included as in the show, and a slide built
+up in steps gets a page for each step, see `org-slideboard-export-steps'.
+The pages have the size of the Emacs frame.  This needs Emacs built
+with Cairo, and pdfunite, qpdf or Ghostscript to join the pages.  The
+show is started if it is not running, and stopped again at the end;
+otherwise it comes back to the slide it was on."
+  (interactive
+   (let ((pres (or org-slideboard-presentation-file (org-slideboard--file))))
+     (unless pres (user-error "Not in a presentation"))
+     (list (read-file-name "Save the slides as PDF: " (file-name-directory pres) nil nil
+                           (concat (file-name-base pres) "-slideboard.pdf")))))
+  (unless (and (fboundp 'x-export-frames) (display-graphic-p))
+    (user-error "Saving slides as PDF needs a graphical Emacs built with Cairo"))
+  (setq file (expand-file-name file))
+  (let ((was-running org-slideboard--running)
+        (slide org-slideboard-current-slide-number)
+        (step org-slideboard--step)
+        (dir (make-temp-file "org-slideboard-pdf" t))
+        (pages '())
+        ;; no cursor on the pages
+        (cursor (frame-parameter nil 'cursor-type))
+        (cursor-other (default-value 'cursor-in-non-selected-windows)))
+    (unless was-running
+      (org-slideboard-start-slideshow))
+    (modify-frame-parameters nil '((cursor-type . nil)))
+    (setq-default cursor-in-non-selected-windows nil)
+    (unwind-protect
+        (let ((org-slideboard--exporting t)
+              (which (with-current-buffer (org-slideboard--show-buffer)
+                       org-slideboard-export-steps)))
+          (dotimes (k (length org-slideboard-slide-list))
+            (let ((n (1+ k)))
+              (org-slideboard-goto-slide n 1)
+              (let ((last org-slideboard--steps))
+                (dolist (s (if (eq which 'last) (list last) (number-sequence 1 last)))
+                  (unless (= s org-slideboard--step)
+                    (org-slideboard-goto-slide n s))
+                  (message "Saving page %d..." (1+ (length pages)))
+                  (push (org-slideboard--export-page dir (1+ (length pages))) pages)))))
+          (setq pages (nreverse pages))
+          (org-slideboard--join-pdfs pages file))
+      (delete-directory dir t)
+      (if was-running
+          (org-slideboard-goto-slide slide step)
+        (org-slideboard-stop-slideshow))
+      (modify-frame-parameters nil `((cursor-type . ,cursor)))
+      (setq-default cursor-in-non-selected-windows cursor-other))
+    (message "Saved %d pages to %s" (length pages) (abbreviate-file-name file))))
+
 ;;* Menu and org-slideboard-mode
 
 (defvar org-slideboard-keys-mode-map
@@ -3103,6 +3199,7 @@ See `org-slideboard-increase-text-size'."
     (define-key map (kbd "\e\eg") 'org-slideboard-goto-slide)
     (define-key map (kbd "\e\et") 'org-slideboard-toc)
     (define-key map (kbd "\e\eq") 'org-slideboard-stop-slideshow)
+    (define-key map (kbd "\e\ep") 'org-slideboard-export-pdf)
     (define-key map (kbd "\e\e0") 'org-slideboard-reset-text-size)
     map)
   "Keys of the show, active only in slide windows.
@@ -3120,6 +3217,7 @@ or `keymap-set' on this map.")
     ["Open this slide" org-slideboard-open-slide t]
     ["Goto slide" org-slideboard-goto-slide t]
     ["Table of contents" org-slideboard-toc t]
+    ["Save as PDF" org-slideboard-export-pdf t]
     ["Stop slide show"  org-slideboard-stop-slideshow t]))
 
 
