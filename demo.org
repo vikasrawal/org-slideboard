@@ -13,6 +13,7 @@
 #+SLIDEBOARD: footline:("%a" "%S" "%n / %N")
 # Remove "# " from the next line to show this file in a light theme:
 # #+SLIDEBOARD: theme:modus-operandi
+#+SLIDEBOARD_HIDE: \mbox{}
 
 # This file is a presentation about org-slideboard, shown with
 # org-slideboard.  Open it and run M-x org-slideboard-start-slideshow.
@@ -323,17 +324,21 @@ on the slide and in the beamer PDF.
 :NOTE: property drawers are hidden
 :END:
 Beamer and babel lines that only matter for export are not shown: property
-drawers, =#+NAME:=, =#+CAPTION:= and =#+ATTR_...:= lines, stray LaTeX such as
-=\vspace=, and code blocks exported as results only.
+drawers, =#+NAME:=, =#+CAPTION:= and =#+ATTR_...:= lines, stray LaTeX,
+LaTeX-only snippets@@latex:\hfill@@ and code blocks exported as results only.
 
 \vspace{2mm}
 #+NAME: tbl-hidden-keywords
 #+ATTR_LATEX: :align ll
-| Written in the file        | On the slide |
-|----------------------------+--------------|
-| =#+NAME:=, =#+ATTR_LATEX:= | hidden       |
-| =\vspace{2mm}=             | hidden       |
-| a =:PROPERTIES:= drawer    | hidden       |
+| Written in the file             | On the slide  |
+|---------------------------------+---------------|
+| =#+NAME:=, =#+ATTR_LATEX:=      | hidden        |
+| a =:PROPERTIES:= drawer         | hidden        |
+| =\vspace{-2mm}= on its own line | hidden        |
+| =\vspace{2mm}= on its own line  | blank space   |
+| =@@latex:\hfill@@=              | hidden        |
+| =\mbox{}=, as in this file's    | hidden\mbox{} |
+| =#+SLIDEBOARD_HIDE:= line       |               |
 
 =#+SLIDEBOARD: clutter:nil= shows all of it again.
 

@@ -696,6 +696,67 @@ grows with the text; a negative one is hidden like other clutter."
               (org-slideboard--hide-region (match-beginning 0) (match-end 0)))))
       (org-slideboard--hide-region beg end))))
 
+(defun org-slideboard--hide-latex (beg end)
+  "Hide LaTeX that means nothing on a slide, between BEG and END.
+That is:
+- export snippets for other back-ends, such as @@latex:\\mbox{}@@;
+  of a @@slideboard:...@@ snippet only the markers are hidden;
+- the strings given in #+SLIDEBOARD_HIDE: lines of the file, e.g.
+  #+SLIDEBOARD_HIDE: \\mbox{};
+- the matches of the regexps in #+SLIDEBOARD_HIDE_REGEXP: lines; if a
+  regexp has a group 1, that group stays visible, so
+  #+SLIDEBOARD_HIDE_REGEXP: \\\\mbox{\\([^}]*\\)} shows the text of \\mbox{text}.
+Text in code, verbatim, source and example blocks and equations is
+left alone."
+  (add-to-invisibility-spec 'org-slideboard)
+  (let ((kw (org-with-wide-buffer
+             (org-collect-keywords '("SLIDEBOARD_HIDE" "SLIDEBOARD_HIDE_REGEXP"))))
+        (case-fold-search nil)
+        (skip (lambda (pos)
+                (save-excursion
+                  (save-match-data
+                    (goto-char pos)
+                    (let ((el (org-element-context)))
+                      (or (memq (org-element-type el)
+                                '(verbatim code src-block example-block inline-src-block
+                                  fixed-width export-block))
+                          (org-slideboard--math-p el))))))))
+    (save-excursion
+      ;; export snippets
+      (goto-char beg)
+      (while (re-search-forward "@@\\([-A-Za-z0-9]+\\):\\(\\(?:.\\|\n\\)*?\\)@@" end t)
+        (let ((mb (match-beginning 0)) (me (match-end 0))
+              (cb (match-beginning 2)) (ce (match-end 2))
+              (backend (downcase (match-string 1))))
+          (when (save-excursion
+                  (save-match-data
+                    (goto-char mb)
+                    (eq (org-element-type (org-element-context)) 'export-snippet)))
+            (if (equal backend "slideboard")
+                (progn (org-slideboard--hide-region mb cb)
+                       (org-slideboard--hide-region ce me))
+              (org-slideboard--hide-region mb me)))))
+      ;; #+SLIDEBOARD_HIDE: and #+SLIDEBOARD_HIDE_REGEXP:
+      (dolist (re (append (mapcar #'regexp-quote
+                                  (delete "" (mapcar #'string-trim
+                                                     (cdr (assoc "SLIDEBOARD_HIDE" kw)))))
+                          (delete "" (mapcar #'string-trim
+                                             (cdr (assoc "SLIDEBOARD_HIDE_REGEXP" kw))))))
+        (condition-case nil
+            (progn
+              (goto-char beg)
+              (while (re-search-forward re end t)
+                (let ((mb (match-beginning 0)) (me (match-end 0))
+                      (gb (match-beginning 1)) (ge (match-end 1)))
+                  (when (= mb me) (forward-char 1))
+                  (unless (or (= mb me) (funcall skip mb))
+                    (if gb
+                        (progn (org-slideboard--hide-region mb gb)
+                               (org-slideboard--hide-region ge me))
+                      (org-slideboard--hide-region mb me))))))
+          (invalid-regexp
+           (message "org-slideboard: invalid #+SLIDEBOARD_HIDE_REGEXP: %s" re)))))))
+
 (defun org-slideboard--hide-clutter (beg end)
   "Hide beamer and babel clutter between BEG and END."
   (when org-slideboard-hide-clutter
@@ -1648,6 +1709,7 @@ I is the column index, used to name the indirect buffer."
       (goto-char (point-min))
       (visual-line-mode 1)
       (org-slideboard--hide-clutter (point-min) (point-max))
+      (org-slideboard--hide-latex (point-min) (point-max))
       (org-slideboard--hide-unrevealed (point-min) (point-max))
       (org-slideboard--hide-drawers)
       (org-slideboard--reflow)
@@ -2051,6 +2113,7 @@ must be the base buffer, narrowed to the slide."
       (text-scale-set (or org-slideboard--slide-title-scale
                           org-slideboard-title-text-scale 0)))
     (org-slideboard--hide-clutter (point-min) (point-max))
+    (org-slideboard--hide-latex (point-min) (point-max))
     (org-slideboard--hide-drawers)
     (org-slideboard--expand-macros)
     (org-slideboard--preview-latex)

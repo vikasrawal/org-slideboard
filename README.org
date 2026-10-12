@@ -935,6 +935,24 @@ When =org-slideboard-hide-clutter= is non-nil, the following are hidden:
 - blank lines left at the top of a column
 - the =:slide:= tag
 
+LaTeX inside the text is hidden too, when it is marked as such:
+
+- export snippets for other back-ends, such as =@@latex:\hfill@@=, are
+  hidden (whatever =org-slideboard-hide-clutter= says), and of a
+  =@@slideboard:...@@= snippet only the contents are shown.  This is the Org
+  way to write text for the PDF only, or for the slides only.
+- for LaTeX written directly in the text, =#+SLIDEBOARD_HIDE:= lines name
+  strings to hide on the slides, and =#+SLIDEBOARD_HIDE_REGEXP:= lines
+  Emacs regexps.  If a regexp has a group, the group stays visible:
+
+  #+begin_example
+  ,#+SLIDEBOARD_HIDE: \mbox{}
+  ,#+SLIDEBOARD_HIDE_REGEXP: \\mbox{\([^}]+\)}
+  #+end_example
+
+  hides =\mbox{}=, and shows =\mbox{some text}= as =some text=.  Code,
+  verbatim text, example and source blocks, and equations are left alone.
+
 * Beautification
 
 During the presentation, org-slideboard turns on the minor modes in
