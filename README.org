@@ -904,6 +904,11 @@ Lists are laid out with overlays, so the file is not changed:
   text and is clear even in proportional text.
 - *Wrapped lines*: when an item wraps, the following lines start under
   the item's text, not at the left margin (=org-slideboard-hanging-indent=).
+- *Description lists* (=- Term :: text=) look as in beamer: no bullet, the
+  term in bold (face =org-slideboard-description-term=) without the =::=,
+  and wrapped lines indented by =org-slideboard-list-indent= spaces.
+- *Numbered items* keep their numbers, also when they follow bulleted
+  items in the same list.
 
 The bullets use the face =org-slideboard-bullet= (the level-1 heading colour,
 bold, 1.3 times the text height).  For example:

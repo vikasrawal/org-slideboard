@@ -250,6 +250,11 @@ every frame of every slide back to where the show started.
   easy to read even when it runs over two or three lines of the slide.
 1. Numbered items keep their numbers.
 2. Like this.
+- Description lists :: show their terms in bold, without a bullet and
+  without the =::=, as in beamer.
+  + A nested list keeps its bullets.
+- Wrapping :: long descriptions wrap with their lines indented under the
+  item, so the terms stand out.
 
 ** Step by step                                                       :slide:
 Beamer overlays build a slide up in steps.  PgDn shows the next step,
