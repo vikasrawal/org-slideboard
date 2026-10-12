@@ -419,12 +419,20 @@ still apply.  It can come before or after other attribute lines such as
 [[file:plot.png]]
 #+end_example
 
+Drawings made with [[https://github.com/misohena/el-easydraw][el-easydraw]] (=[[edraw:file=drawing.edraw.svg]]= and
+=[[edraw:data=...]]= links) are shown the same way when el-easydraw is
+loaded: scaled to their window or column, and sized by =#+ATTR_ORG:= like
+other images.  Clicking a drawing during the show still opens el-easydraw's
+editor.  Without el-easydraw, the links are shown as links.
+
 This does not depend on =org-image-actual-width= or other inline image
 settings.  An image
 file that has changed since it was last shown, e.g. a plot rewritten by a
 code block, is read again, so =C-c ;= (or =C-c C-c= in a code window) shows
 the new version rather than the one Emacs cached.  When the presentation stops,
-the normal Org inline images are shown again.
+the image previews are put back as they were: Org's inline images (and
+el-easydraw's drawings) are shown again if they were shown before the
+show, and not otherwise.
 
 ** Text size
 Each part of the show has its own text size: the frames of a slide

@@ -162,6 +162,12 @@ so a frame keeps its size when its slide is shown again.")
   "Start of this frame's text in the presentation buffer, or nil.
 Set in the indirect buffers that show the frames of a slide.")
 
+(defvar org-slideboard--previews 'unknown
+  "The image previews of the presentation buffer before the show.
+A list (ORG EDRAW): whether Org's inline images and el-easydraw's
+drawings were shown, or `unknown' when no show is running.  See
+`org-slideboard--save-previews'.")
+
 (defvar org-slideboard--start-scales nil
   "The values of `org-slideboard--all-scales' when the show started.")
 
@@ -1087,6 +1093,45 @@ may come between.  See
           (setq size (org-slideboard--image-size (match-string 2)))))
       size)))
 
+(declare-function edraw-org-link-at-point "edraw-org" ())
+(declare-function edraw-org-link-object-link-properties "edraw-org"
+                  (link-object noerror &optional use-normal-file-link-p))
+(declare-function edraw-org-link-props-image-data-or-file "edraw-org" (link-props))
+
+(defun org-slideboard--image-overlay (beg end image-spec win max-w max-h)
+  "Show the image IMAGE-SPEC over BEG to END, sized for window WIN.
+IMAGE-SPEC is (FILE-OR-DATA TYPE DATA-P), as for `create-image'.  The
+image is at most MAX-W by MAX-H pixels, and a size from an #+ATTR_ORG:
+line above it, or a text property, applies within those limits; see
+`org-slideboard--show-images'."
+  (let* ((size (or (get-text-property beg 'org-slideboard-image-size)
+                   (save-match-data
+                     (org-slideboard--image-size-above
+                      (save-excursion (goto-char beg) (line-beginning-position))))))
+         ;; in the header, images are sized to their part
+         (share (or (get-text-property beg 'org-slideboard-share) 1))
+         (px (lambda (v whole) (cond ((floatp v) (floor (* v whole)))
+                                     ((integerp v) v))))
+         (w (funcall px (car size) (* share (window-body-width win t))))
+         (h (funcall px (cdr size) (window-body-height win t)))
+         (ov (make-overlay beg end nil t nil)))
+    (overlay-put ov 'display (apply #'create-image (nth 0 image-spec) (nth 1 image-spec)
+                                    (nth 2 image-spec)
+                                    :max-width (floor (* share max-w))
+                                    :max-height max-h
+                                    (append (and w (list :width w))
+                                            (and h (list :height h)))))
+    (overlay-put ov 'priority 1000)
+    ;; the link's underline would be drawn across the image
+    (overlay-put ov 'face '(:underline nil :inherit default))
+    ;; Org hides the link brackets with an `invisible' text property,
+    ;; and a display spec on invisible text is not shown.  A non-nil
+    ;; overlay value that is not in the invisibility spec takes
+    ;; precedence and keeps it visible.
+    (overlay-put ov 'invisible 'org-slideboard-image)
+    (push ov org-slideboard--hide-overlays)
+    ov))
+
 (defun org-slideboard--show-images (&optional win)
   "Display image links in the accessible part of the current buffer.
 Images are scaled down to fit in window WIN (default: the selected
@@ -1097,7 +1142,9 @@ window, sets its size, within those limits; see
 `org-slideboard--image-size'.  The images are drawn with our own
 high-priority overlays, so they do not depend on (and override) the
 Org inline image settings.  Image files that changed since
-they were last shown are read again."
+they were last shown are read again.  When el-easydraw is loaded,
+its drawings ([[edraw:file=...]] and [[edraw:data=...]] links) are
+shown the same way."
   (let* ((win (or win (selected-window)))
          (max-w (floor (* org-slideboard-image-width-fraction (window-body-width win t))))
          (max-h (floor (* org-slideboard-image-height-fraction (window-body-height win t)))))
@@ -1108,32 +1155,31 @@ they were last shown are read again."
           (when (and (string-match-p (image-file-name-regexp) file)
                      (file-exists-p file))
             (org-slideboard--fresh-image-file file)
-            (let* ((beg (match-beginning 0))
-                   (end (match-end 0))
-                   (size (or (get-text-property beg 'org-slideboard-image-size)
-                             (save-match-data
-                               (org-slideboard--image-size-above (line-beginning-position)))))
-                   ;; in the header, images are sized to their part
-                   (share (or (get-text-property beg 'org-slideboard-share) 1))
-                   (px (lambda (v whole) (cond ((floatp v) (floor (* v whole)))
-                                               ((integerp v) v))))
-                   (w (funcall px (car size) (* share (window-body-width win t))))
-                   (h (funcall px (cdr size) (window-body-height win t)))
-                   (ov (make-overlay beg end nil t nil)))
-              (overlay-put ov 'display (apply #'create-image file nil nil
-                                              :max-width (floor (* share max-w))
-                                              :max-height max-h
-                                              (append (and w (list :width w))
-                                                      (and h (list :height h)))))
-              (overlay-put ov 'priority 1000)
-              ;; the link's underline would be drawn across the image
-              (overlay-put ov 'face '(:underline nil :inherit default))
-              ;; Org hides the link brackets with an `invisible' text
-              ;; property, and a display spec on invisible text is not
-              ;; shown.  A non-nil overlay value that is not in the
-              ;; invisibility spec takes precedence and keeps it visible.
-              (overlay-put ov 'invisible 'org-slideboard-image)
-              (push ov org-slideboard--hide-overlays))))))))
+            (org-slideboard--image-overlay (match-beginning 0) (match-end 0)
+                                           (list file nil nil) win max-w max-h))))
+      ;; el-easydraw drawings: their own inline images are sized to the
+      ;; frame, so they are drawn here, like the other images
+      (when (and (featurep 'edraw-org) (image-type-available-p 'svg))
+        (goto-char (point-min))
+        (while (re-search-forward "\\[\\[edraw:" nil t)
+          (let ((next (match-end 0)))
+            ;; a drawing that cannot be shown stays a link, without an error
+            (condition-case nil
+                (let* ((link (save-excursion
+                               (goto-char (+ (match-beginning 0) 2))
+                               (edraw-org-link-at-point)))
+                       (props (and link
+                                   (car (edraw-org-link-object-link-properties link t))))
+                       (image (and props (edraw-org-link-props-image-data-or-file props))))
+                  (when image
+                    (org-slideboard--image-overlay
+                     (org-element-property :begin link)
+                     (- (org-element-property :end link)
+                        (or (org-element-property :post-blank link) 0))
+                     (list (car image) 'svg (cdr image)) win max-w max-h)
+                    (setq next (max next (org-element-property :end link)))))
+              (error nil))
+            (goto-char next)))))))
 
 (defun org-slideboard--reflow ()
   "Display hard-wrapped paragraphs in the accessible region as one line.
@@ -1262,6 +1308,42 @@ with overlays, so the buffer text is not changed."
 				   ;; nested items lie inside their parent's overlay
 				   (overlay-put ov 'priority (+ 10 depth))
 				   (push ov org-slideboard--hide-overlays)))))))))))
+
+(defun org-slideboard--previews-on-p ()
+  "Return whether Org's inline images are shown in the current buffer."
+  (cond ((boundp 'org-link-preview-overlays)
+         (and (symbol-value 'org-link-preview-overlays) t))
+        ((boundp 'org-inline-image-overlays)
+         (and (symbol-value 'org-inline-image-overlays) t))))
+
+(defun org-slideboard--save-previews ()
+  "Remember the image previews of the current buffer, once per show.
+See `org-slideboard--restore-previews'."
+  (when (eq org-slideboard--previews 'unknown)
+    (setq org-slideboard--previews
+          (list (org-slideboard--previews-on-p)
+                (and (boundp 'edraw-org-link-image-mode)
+                     (symbol-value 'edraw-org-link-image-mode))))))
+
+(defun org-slideboard--restore-previews ()
+  "Put the image previews of the current buffer back as before the show.
+Org's inline images are shown again, fresh, if they were shown before,
+and cleared otherwise; el-easydraw's drawings likewise."
+  (unless (eq org-slideboard--previews 'unknown)
+    (let ((org (nth 0 org-slideboard--previews))
+          (edraw (nth 1 org-slideboard--previews)))
+      (setq org-slideboard--previews 'unknown)
+      (if org
+          (org-slideboard--org-images)
+        (cond ((fboundp 'org-link-preview-clear)
+               (funcall 'org-link-preview-clear (point-min) (point-max)))
+              ((fboundp 'org-remove-inline-images)
+               (with-no-warnings (org-remove-inline-images)))))
+      (when (fboundp 'edraw-org-link-image-mode)
+        (let ((now (and (boundp 'edraw-org-link-image-mode)
+                        (symbol-value 'edraw-org-link-image-mode))))
+          (unless (eq (and edraw t) (and now t))
+            (funcall 'edraw-org-link-image-mode (if edraw 1 -1))))))))
 
 (defun org-slideboard--org-images ()
   "Redisplay Org inline images in the current buffer the normal way."
@@ -3436,6 +3518,7 @@ presentation buffer, widened."
   (org-slideboard--apply-theme)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard--save-scales)
+  (org-slideboard--save-previews)
   (org-slideboard-initialize)
   (org-slideboard--goto-slide-heading)
   (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
@@ -3512,6 +3595,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (org-slideboard--apply-theme)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard--save-scales)
+  (org-slideboard--save-previews)
   (org-slideboard-initialize)
   (org-slideboard--setup-show)
   (goto-char (point-min))
@@ -3555,9 +3639,9 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (mapc #'delete-overlay org-slideboard--start-overlays)
   (setq org-slideboard--start-overlays '())
 
-  ;; Redisplay inline images
+  ;; the image previews as they were before the show
   (widen)
-  (org-slideboard--org-images)
+  (org-slideboard--restore-previews)
 
   ;; ;; clean up miscellaneous buffers
   (when (get-buffer "*Animation*") (kill-buffer "*Animation*"))

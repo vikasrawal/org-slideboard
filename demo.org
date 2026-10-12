@@ -11,6 +11,8 @@
 #+SLIDEBOARD_MACRO: hl *$2*
 #+MACRO: alert @@latex:\alert{$1}@@@@slideboard:*$1*@@
 #+SLIDEBOARD: footline:("%a" "%S" "%n / %N")
+# Remove "# " from the next line to show this file in a light theme:
+# #+SLIDEBOARD: theme:modus-operandi
 
 # This file is a presentation about org-slideboard, shown with
 # org-slideboard.  Open it and run M-x org-slideboard-start-slideshow.
@@ -363,6 +365,23 @@ alignment; tables are re-aligned.
 + =list-indent:6= indents each level by six spaces instead of four.
 + =hanging:nil= stops wrapped lines from starting under the text of their
   item, so they start at the left margin instead.
+
+** A theme for the show                                               :slide:
+A presentation can have its own Emacs theme, e.g. a light one for a
+projector, while everything else keeps your usual theme:
+
+#+begin_example
+,#+SLIDEBOARD: theme:modus-operandi
+#+end_example
+
++ Your themes are switched off when the show starts and back on when it
+  stops.
++ To try it, remove the =#= and the space before the commented
+  =#+SLIDEBOARD:= line at the top of this file, and start the show again.
++ Emacs asks before loading a theme that is not in =custom-safe-themes=;
+  its own themes, such as =modus-operandi=, are trusted.
++ The PDF of the show (=M-ESC p=) uses the theme too.
++ =org-slideboard-theme= sets a theme for every presentation.
 
 ** Images                                                             :slide:
 *** Image                                                             :BMCOL:
