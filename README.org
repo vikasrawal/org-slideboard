@@ -978,6 +978,22 @@ the presentation again:
 Note: in variable-pitch text, code blocks can lose their alignment.  Tables
 are re-aligned during the show (see [[*Tables][Tables]]).
 
+** Theme
+A presentation can have its own Emacs theme, e.g. a light one for a
+projector, while you keep your usual theme for everything else:
+
+#+begin_example
+,#+SLIDEBOARD: theme:modus-operandi
+#+end_example
+
+The themes in use are switched off when the show starts and back on when
+it stops.  =org-slideboard-theme= sets one for every presentation.  A theme
+is Lisp code, so Emacs asks before loading one that is not in
+=custom-safe-themes= (themes that come with Emacs are trusted); if you say
+no, the show goes on with your theme.  A misspelt name is reported and
+ignored.  The PDF of the show (=M-ESC p=) is made with the theme too, so a
+light theme gives light pages.
+
 * Per-file settings
 
 Every setting below can be set globally (e.g. in your init file) and
@@ -1018,6 +1034,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =title-page=        | =org-slideboard-title-page=                           | =t= / =nil=                           |
 | =section-pages=     | =org-slideboard-section-pages=                        | =t= / =nil=                           |
 | =animate=           | =org-slideboard-animate-pages=                        | =t= / =nil=                           |
+| =theme=             | =org-slideboard-theme=                                | theme name, or =nil=                  |
 | =header-height=     | =org-slideboard-header-height=                        | number                                |
 | =header-scale=      | =org-slideboard-header-text-scale=                    | number                                |
 | =export-steps=      | =org-slideboard-export-steps=                         | =all= / =last=                        |
@@ -1092,6 +1109,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-title-page=                | t                                              | show a title page                                                  |
 | =org-slideboard-section-pages=             | t                                              | show section pages                                                 |
 | =org-slideboard-animate-pages=             | t                                              | animate the title and section pages                                |
+| =org-slideboard-theme=                     | nil                                            | Emacs theme during the show (nil: keep the current one)            |
 | =org-slideboard-page-text-scale=           | 5                                              | text scale of the title and section pages                          |
 | =org-slideboard-slide-tag=                 | "slide"                                        | tag that marks slides                                              |
 | =org-slideboard-footline=                  | ='("%a" "%t" "%n / %N")=                       | information strip on every slide, see [[*Information strip][Information strip]]            |

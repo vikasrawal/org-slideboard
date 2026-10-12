@@ -431,6 +431,55 @@ Pressing a key skips the rest of the animation."
   :type 'boolean
   :group 'org-slideboard)
 
+(defcustom org-slideboard-theme nil
+  "Emacs theme to use during the show, or nil to keep the current one.
+The themes in use are switched off when the show starts and back on
+when it stops.  It can be set for one file with
+#+SLIDEBOARD: theme:modus-operandi.  A theme is Lisp code, so Emacs
+asks before loading one that is not in `custom-safe-themes'.  The
+show's PDF (`org-slideboard-export-pdf') uses the theme too."
+  :type '(choice (const :tag "Keep the current theme" nil) symbol)
+  :group 'org-slideboard)
+
+(defvar org-slideboard--saved-themes nil
+  "The themes that were on when the show switched to `org-slideboard-theme'.
+The symbol `none' stands for no theme.")
+
+(defun org-slideboard--theme-p (value)
+  "Return non-nil if VALUE is nil or the name of an available theme."
+  (or (null value)
+      (and (symbolp value) (memq value (custom-available-themes)))))
+
+(defun org-slideboard--apply-theme ()
+  "Switch to `org-slideboard-theme' for the show, if it is set.
+The current buffer is the presentation buffer.  See
+`org-slideboard--restore-theme'."
+  (let ((theme org-slideboard-theme))
+    (when (and theme
+               (not (equal custom-enabled-themes (list theme))))
+      (unless org-slideboard--saved-themes
+        (setq org-slideboard--saved-themes (or custom-enabled-themes 'none)))
+      (mapc #'disable-theme custom-enabled-themes)
+      ;; not NO-CONFIRM: the name comes from the file, and a theme is code
+      (condition-case err
+          (load-theme theme)
+        (error
+         (org-slideboard--restore-theme)
+         (message "org-slideboard: cannot use theme %s: %s"
+                  theme (error-message-string err)))))))
+
+(defun org-slideboard--restore-theme ()
+  "Switch back to the themes in use before the show, if it changed them."
+  (when org-slideboard--saved-themes
+    (let ((saved (if (eq org-slideboard--saved-themes 'none)
+                     nil
+                   org-slideboard--saved-themes)))
+      (setq org-slideboard--saved-themes nil)
+      (mapc #'disable-theme custom-enabled-themes)
+      ;; the first in the list is the one that takes precedence
+      (dolist (theme (reverse saved))
+        (enable-theme theme)))))
+
 (defcustom org-slideboard-page-text-scale 5
   "Text scale for the title and section pages."
   :type 'integer
@@ -2052,6 +2101,7 @@ Parts that are functions can only be set in the configuration."
     ("title-page" org-slideboard-title-page booleanp)
     ("section-pages" org-slideboard-section-pages booleanp)
     ("animate" org-slideboard-animate-pages booleanp)
+    ("theme" org-slideboard-theme org-slideboard--theme-p)
     ("header-height" org-slideboard-header-height numberp)
     ("header-scale" org-slideboard-header-text-scale numberp)
     ("export-steps" org-slideboard-export-steps org-slideboard--export-steps-p)
@@ -3383,6 +3433,7 @@ presentation buffer, widened."
   (setq org-slideboard-presentation-file (org-slideboard--file))
   (widen)
   (org-slideboard--apply-keyword-settings)
+  (org-slideboard--apply-theme)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard--save-scales)
   (org-slideboard-initialize)
@@ -3458,6 +3509,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (goto-char (point-min))
 
   (org-slideboard--apply-keyword-settings)
+  (org-slideboard--apply-theme)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard--save-scales)
   (org-slideboard-initialize)
@@ -3531,6 +3583,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
                       (abbreviate-file-name (buffer-file-name))))
   (org-slideboard--unbeautify)
   (org-slideboard--restore-keyword-settings)
+  (org-slideboard--restore-theme)
   (setq org-slideboard--running nil)
   (org-slideboard-mode -1))
 
