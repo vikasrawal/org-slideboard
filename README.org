@@ -188,6 +188,8 @@ strip, the frames, and the title and section pages.
 | =C--=     | smaller text in all frames of all slides |
 | =C-c }=   | larger text in the selected frame only   |
 | =C-c {=   | smaller text in the selected frame only  |
+| =C-c >=   | everything larger: text, titles, header  |
+| =C-c <=   | everything smaller                       |
 | =M-ESC g= | go to slide number                       |
 | =M-ESC t= | table of contents                        |
 | =M-ESC q= | stop the presentation                    |
@@ -196,12 +198,12 @@ strip, the frames, and the title and section pages.
 
 They are not active in other buffers, such as a REPL, another file or the
 buffer where a code block is edited, so your own keys keep working there
-during the show.  =C-c ;= and =C-c {= / =C-c }= are in the range Emacs
-sets aside for minor modes, so they do not clash with =C-c= plus a letter,
-which are yours.  Org itself uses them, though (commenting a heading, and
-table formula tools); in slide windows the show's keys take precedence.  If
-you need those Org commands during a show, or any of these keys clash with
-your own, change them as described below.
+during the show.  They avoid =C-c= plus a letter, which are yours.  =C-c ;=,
+=C-c {= / =C-c }= and =C-c <= / =C-c >= are keys Org itself uses
+(commenting a heading, table formula tools, and the calendar); in slide
+windows the show's keys take precedence, and everywhere else they keep
+their Org meaning.  If you need those Org commands during a show, or any
+of these keys clash with your own, change them as described below.
 
 On a slide with code and results (see [[*Code and results][Code and results]]),
 these work in the code window:
@@ -425,10 +427,15 @@ the new version rather than the one Emacs cached.  When the presentation stops,
 the normal Org inline images are shown again.
 
 ** Text size
-Only the text in the frames of a slide changes size.  Slide titles (the
-title strip) and the title and section pages keep theirs:
-=org-slideboard-title-text-scale= (2) and =org-slideboard-page-text-scale=
-(5).  Text is never shrunk to fit.
+Each part of the show has its own text size: the frames of a slide
+(=org-slideboard-text-scale=, 2), the slide titles
+(=org-slideboard-title-text-scale=, 2), the header
+(=org-slideboard-header-text-scale=, 0) and the title and section pages
+(=org-slideboard-page-text-scale=, 5).  Text is never shrunk to fit.
+
+=C-c >= and =C-c <= change all of them together, one step at a time, so
+everything on the slides grows or shrinks and the titles keep their size
+relative to the text.  The keys below change the frames only.
 
 All frames of all slides start at =org-slideboard-text-scale= (2, in steps
 of =text-scale-mode=).  There are two ways to change it during the show:
@@ -439,6 +446,7 @@ of =text-scale-mode=).  There are two ways to change it during the show:
 | =C-c }= / =C-c {=                            | the selected frame of this slide only                          |
 | Emacs zoom: ~C-x C-=~, =C-x C--=, Ctrl+wheel | the selected frame of this slide only                          |
 | =C-x C-0=                                    | the selected frame back to the common size                     |
+| =C-c >= / =C-c <=                            | everything: text, titles, header and pages                     |
 | =M-ESC 0=                                    | everything back to how the show started (text and frame sizes) |
 
 A frame changed on its own keeps its size when you come back to the slide,
@@ -557,9 +565,12 @@ definition for the show.  The expansion is chosen in this order:
    ,#+MACRO: cc @@latex:\cellcolor{$1}$2@@@@slideboard:$2@@
    #+end_example
 
-A macro whose expansion is empty (like =cc= above with no show
-definition) or that is not defined at all is left as it is, with its
-braces hidden (=org-slideboard-hide-macro-markers=).
+A macro whose expansion is empty is left out of the slide, with the
+blanks after it.  That is a macro for other back-ends only, e.g.
+=#+MACRO: SC @@latex:\SetCell[r=$1,c=$2]{c}@@=, so a table cell
+={{{SC(2,1)}}} Crops= shows =Crops=; or one with an empty show definition,
+=#+SLIDEBOARD_MACRO: SC=.  A macro that is not defined at all is left as
+it is, with its braces hidden (=org-slideboard-hide-macro-markers=).
 
 Expansions are shown as Org text: =*bold*= and =/italic/= in an
 expansion look as they do on the slide, and macros inside an expansion
@@ -584,6 +595,37 @@ widths.  This is redone whenever the text size changes.
 
 Only the display changes; the file is not.  To keep Org's own layout, set
 =org-slideboard-align-tables= to nil (or =#+SLIDEBOARD: align-tables:nil=).
+
+*** Merged cells
+Org tables cannot merge cells, so org-slideboard has its own markers: a
+cell that holds just =<<= is part of the cell on its left, and one that
+holds just =^^= is part of the cell above.  The text stays in the first
+cell.
+
+#+begin_example
+| Production | <<    | Trade   |
+|------------+-------+---------|
+| Area       | Yield | Exports |
+| Crops      | Wheat |      10 |
+| ^^         | Rice  |      20 |
+#+end_example
+
+On the slide, Production is centred across two columns, the cell below
+Crops is blank, and a rule inside a merged cell is not drawn across it.
+To Org it is an ordinary table, so editing, =TAB= and formulas work as
+usual.
+
+In LaTeX and beamer export, a cell merged across columns becomes
+=\multicolumn{2}{c}{Production}= (and the =<<= cells are left out), and
+one merged across rows =\multirow{2}{*}{Crops}=, which needs
+=\usepackage{multirow}= (e.g. in a =#+LATEX_HEADER:= line).  No other
+package is needed.  Other back-ends leave the merged cells empty.  The
+export changes only the copy that is exported, never the file; set
+=org-slideboard-export-table-spans= to nil to leave tables alone.  The
+markers are set by =org-slideboard-table-span-markers=.
+
+The text of a merged cell is centred; a cell merged across rows has its
+text in its top row.
 
 ** Code and results
 A slide with a source block can show only the block's results, only its

@@ -162,6 +162,9 @@ so a frame keeps its size when its slide is shown again.")
   "Start of this frame's text in the presentation buffer, or nil.
 Set in the indirect buffers that show the frames of a slide.")
 
+(defvar org-slideboard--start-scales nil
+  "The values of `org-slideboard--all-scales' when the show started.")
+
 (defvar org-slideboard--start-text-scale nil
   "The value of `org-slideboard-text-scale' when the show started.")
 
@@ -1718,7 +1721,11 @@ share of the width, or is centred or flush right in it, see
                         truncate-lines t
                         auto-hscroll-mode nil
                         ;; lines of spacers only, e.g. for a \vspace
-                        show-trailing-whitespace nil)
+                        show-trailing-whitespace nil
+                        ;; the parts are placed to the pixel; a part at
+                        ;; the right edge is not cut off
+                        fringe-indicator-alist
+                        (cons '(truncation nil nil) fringe-indicator-alist))
             (dotimes (i n)
               (let ((k 0))
                 (dolist (p parts)
@@ -2287,6 +2294,11 @@ buffer text is not changed."
                   initialized t))
           (let* ((value (ignore-errors (org-macro-expand macro templates)))
                  (string (and value (org-slideboard--macro-string value templates))))
+            ;; a macro for other back-ends only, e.g. @@latex:...@@, or an
+            ;; empty #+SLIDEBOARD_MACRO: is left out, with the blanks after it
+            (when (and string (string-empty-p (string-trim string)))
+              (org-slideboard--hide-region (org-element-property :begin macro)
+                                           (org-element-property :end macro)))
             (when (and string (not (string-empty-p (string-trim string))))
               (let ((ov (make-overlay (org-element-property :begin macro)
                                       (- (org-element-property :end macro)
@@ -2681,6 +2693,156 @@ For the buffer-local `kill-buffer-hook' of the editing buffer."
 
 ;;** Tables
 
+(defcustom org-slideboard-table-span-markers '("<<" . "^^")
+  "Cell contents that merge a table cell with its neighbour, as (LEFT . UP).
+A cell that holds just LEFT is part of the cell on its left, and one
+that holds just UP is part of the cell above, so
+
+  | Production | <<    |
+  | Crops      | Wheat |
+  | ^^         | Rice  |
+
+shows Production across two columns and Crops across two rows.  The
+text of a merged cell is centred.  See also
+`org-slideboard-export-table-spans'."
+  :type '(cons (string :tag "Merge left") (string :tag "Merge up"))
+  :group 'org-slideboard)
+
+(defcustom org-slideboard-export-table-spans t
+  "If non-nil, merged table cells are exported too.
+In LaTeX (and beamer) export, a cell merged across columns becomes
+\\multicolumn, and one merged across rows \\multirow, which needs
+\\usepackage{multirow}.  Other back-ends leave the merged cells empty.
+See `org-slideboard-table-span-markers'."
+  :type 'boolean
+  :group 'org-slideboard)
+
+(defun org-slideboard--span-marker (text)
+  "Return `left' or `up' if TEXT is a span marker, else nil.
+See `org-slideboard-table-span-markers'."
+  (cond ((equal text (car org-slideboard-table-span-markers)) 'left)
+        ((equal text (cdr org-slideboard-table-span-markers)) 'up)))
+
+(defun org-slideboard--table-spans (grid)
+  "Return the spans of the cells in GRID, a table as lists of cell texts.
+A row of GRID is nil for a horizontal rule.  The result has the shape
+of GRID, with (COLUMNS . ROWS) for a cell that starts a span (1 . 1
+for a plain cell), and nil for a cell merged into another."
+  (let ((rows (vconcat grid)))
+    (cl-loop
+     for r from 0 below (length rows)
+     for row = (aref rows r)
+     collect
+     (and row
+          (cl-loop
+           for i from 0 below (length row)
+           for text = (nth i row)
+           collect
+           (unless (eq (org-slideboard--span-marker text) 'left)
+             (let ((cols (1+ (cl-loop for j from (1+ i) below (length row)
+                                      while (eq (org-slideboard--span-marker (nth j row)) 'left)
+                                      count t)))
+                   (down 1))
+               ;; rows below with an up marker in this column, across rules
+               (unless (eq (org-slideboard--span-marker text) 'up)
+                 (cl-loop for k from (1+ r) below (length rows)
+                          for below = (aref rows k)
+                          do (cond ((null below))
+                                   ((eq (org-slideboard--span-marker (nth i below)) 'up)
+                                    (setq down (1+ down)))
+                                   (t (cl-return)))))
+               (cons cols down))))))))
+
+;;*** Merged cells in export
+
+(defconst org-slideboard--span-drop "ORGSLIDEBOARDSPANDROP"
+  "Placeholder for a table cell that LaTeX export leaves out.")
+
+(defun org-slideboard--export-table-spans (backend)
+  "Turn the span markers of tables into merged cells for export to BACKEND.
+For `org-export-before-parsing-functions'.  This changes the copy of
+the buffer that is exported.  See `org-slideboard-export-table-spans'."
+  (when (and org-slideboard-export-table-spans
+             (save-excursion
+               (goto-char (point-min))
+               (re-search-forward
+                (format "|[ \t]*\\(?:%s\\|%s\\)[ \t]*|"
+                        (regexp-quote (car org-slideboard-table-span-markers))
+                        (regexp-quote (cdr org-slideboard-table-span-markers)))
+                nil t)))
+    (let ((latex (org-export-derived-backend-p backend 'latex))
+          (tables '()))
+      (org-element-map (org-element-parse-buffer) 'table
+        (lambda (table)
+          (when (eq (org-element-property :type table) 'org)
+            (push (cons (org-element-property :post-affiliated table)
+                        (org-element-property :contents-end table))
+                  tables))))
+      ;; from the end, so the positions of the others stay valid
+      (dolist (tb tables)
+        (save-excursion
+          (goto-char (car tb))
+          (let* ((lines (split-string (buffer-substring (car tb) (cdr tb)) "\n" t))
+                 (grid (mapcar
+                        (lambda (l)
+                          (unless (string-match-p "\\`[ \t]*|-" l)
+                            (mapcar #'string-trim
+                                    (split-string (replace-regexp-in-string
+                                                   "\\`[ \t]*|\\|[ \t]*|[ \t]*\\'" "" l)
+                                                  "|"))))
+                        lines)))
+            (when (cl-some (lambda (row) (cl-some #'org-slideboard--span-marker row)) grid)
+              (let* ((spans (org-slideboard--table-spans grid))
+                     (new
+                      (cl-mapcar
+                       (lambda (line row rspans)
+                         (if (null row)
+                             line
+                           (concat
+                            "| "
+                            (mapconcat
+                             #'identity
+                             (cl-mapcar
+                              (lambda (text span)
+                                (let* ((marker (org-slideboard--span-marker text))
+                                       (text (if marker "" text)))
+                                  (cond
+                                   ((null span)
+                                    (if latex
+                                        (format "@@latex:%s@@" org-slideboard--span-drop)
+                                      ""))
+                                   ((not latex) text)
+                                   (t
+                                    (let ((inner (if (> (cdr span) 1)
+                                                     (format "@@latex:\\multirow{%d}{*}{@@%s@@latex:}@@"
+                                                             (cdr span) text)
+                                                   text)))
+                                      (if (> (car span) 1)
+                                          (format "@@latex:\\multicolumn{%d}{c}{@@%s@@latex:}@@"
+                                                  (car span) inner)
+                                        inner))))))
+                              row rspans)
+                             " | ")
+                            " |")))
+                       lines grid spans)))
+                (delete-region (car tb) (cdr tb))
+                (goto-char (car tb))
+                (insert (mapconcat #'identity new "\n") "\n")))))))))
+
+(defun org-slideboard--export-drop-cells (text backend _info)
+  "Remove the cells merged into others from the LaTeX table TEXT.
+For `org-export-filter-table-functions', see
+`org-slideboard--export-table-spans'.  BACKEND is the export back-end."
+  (if (and (org-export-derived-backend-p backend 'latex)
+           (string-search org-slideboard--span-drop text))
+      (replace-regexp-in-string
+       (concat "[ \t]*&[ \t]*" org-slideboard--span-drop) "" text t t)
+    text))
+
+(with-eval-after-load 'ox
+  (add-hook 'org-export-before-parsing-functions #'org-slideboard--export-table-spans)
+  (add-hook 'org-export-filter-table-functions #'org-slideboard--export-drop-cells))
+
 (defun org-slideboard--table-line-cells ()
   "Return the cells of the table line at point, as (BEG . END) pairs.
 BEG and END are just inside the separators around the cell: the |
@@ -2698,14 +2860,21 @@ characters, and in a horizontal rule also the + characters."
       (cl-loop for (a b) on pos while b collect (cons (1+ a) b)))))
 
 (defun org-slideboard--table-pad (beg end pixels &optional face)
-  "Display the region BEG END as blank space PIXELS wide, in FACE."
+  "Display the region BEG END as blank space PIXELS wide, in FACE.
+Return the overlay, or nil if the region is empty."
   (when (< beg end)
     (let ((ov (make-overlay beg end nil t nil)))
       (overlay-put ov 'display `(space :width (,(max 0 pixels))))
       (overlay-put ov 'priority 1001)
       (when face (overlay-put ov 'face face))
       (push ov org-slideboard--table-overlays)
-      (push ov org-slideboard--hide-overlays))))
+      (push ov org-slideboard--hide-overlays)
+      ov)))
+
+(defun org-slideboard--table-line-x (win pos)
+  "Return the x position, in pixels, of POS from the start of its line in WIN."
+  (car (window-text-pixel-size
+        win (save-excursion (goto-char pos) (line-beginning-position)) pos)))
 
 (defun org-slideboard--align-tables (&optional win)
   "Align the Org tables in the accessible region to their display in WIN.
@@ -2726,7 +2895,11 @@ right-aligned.  Horizontal rules are drawn to the column widths.  See
             (let ((end (org-element-property :contents-end table))
                   (rows '())
                   (widths (make-hash-table))
-                  (spc nil))
+                  (spc nil)
+                  (sep nil)
+                  ;; (OVERLAY SEP-POS COLUMN): a merged cell's right pad,
+                  ;; the | after it and the column it ends in
+                  (fixes '()))
               (goto-char (org-element-property :post-affiliated table))
               ;; measure
               (while (and (< (point) (or end (point-max)))
@@ -2735,7 +2908,6 @@ right-aligned.  Horizontal rules are drawn to the column widths.  See
                        (cells
                         (cl-loop
                          for (b . e) in (org-slideboard--table-line-cells)
-                         for i from 0
                          collect
                          (let* ((cb (save-excursion (goto-char b)
                                                     (skip-chars-forward " \t" e)
@@ -2747,30 +2919,116 @@ right-aligned.  Horizontal rules are drawn to the column widths.  See
                                      (car (window-text-pixel-size win cb ce)))))
                            (when (and (not spc) (not hline) (< b cb))
                              (setq spc (car (window-text-pixel-size win b (1+ b)))))
-                           (puthash i (max w (gethash i widths 0)) widths)
-                           (list b e cb ce w)))))
+                           (when (and (not sep) (not hline))
+                             (setq sep (car (window-text-pixel-size win (1- b) b))))
+                           (list b e cb ce w
+                                 (buffer-substring-no-properties cb ce))))))
                   (push (cons hline cells) rows))
                 (forward-line 1))
-              (setq spc (or spc (frame-char-width (window-frame win))))
-              ;; pad
-              (dolist (row rows)
+              (setq rows (nreverse rows)
+                    spc (or spc (frame-char-width (window-frame win)))
+                    sep (or sep 0))
+              (let* ((grid (mapcar (lambda (row)
+                                     (unless (car row)
+                                       (mapcar (lambda (c) (nth 5 c)) (cdr row))))
+                                   rows))
+                     ;; merged cells, see `org-slideboard-table-span-markers'
+                     (spans (org-slideboard--table-spans grid))
+                     (span-width
+                      (lambda (i n)
+                        (+ (cl-loop for j from i below (+ i n) sum (gethash j widths 0))
+                           (* (1- n) (+ (* 2 spc) sep))))))
+                ;; column widths, from the cells that are not merged
                 (cl-loop
-                 for (b e cb ce w) in (cdr row)
-                 for i from 0
-                 do (let ((col (gethash i widths 0)))
-                      (cond
-                       ((car row)
-                        (org-slideboard--table-pad b e (+ col (* 2 spc))
-                                             '(:inherit org-table :strike-through t)))
-                       ((>= cb ce)
-                        (org-slideboard--table-pad b e (+ col (* 2 spc))))
-                       ;; Org pads numbers on the left
-                       ((> (- cb b) 1)
-                        (org-slideboard--table-pad b cb (+ (- col w) spc))
-                        (org-slideboard--table-pad ce e spc))
-                       (t
-                        (org-slideboard--table-pad b cb spc)
-                        (org-slideboard--table-pad ce e (+ (- col w) spc))))))))))))))
+                 for row in rows for rspans in spans
+                 unless (car row)
+                 do (cl-loop for c in (cdr row) for span in rspans for i from 0
+                             when (and span (= (car span) 1)
+                                       (not (org-slideboard--span-marker (nth 5 c))))
+                             do (puthash i (max (nth 4 c) (gethash i widths 0)) widths)))
+                ;; a merged cell wider than its columns widens the last
+                (cl-loop
+                 for row in rows for rspans in spans
+                 unless (car row)
+                 do (cl-loop for c in (cdr row) for span in rspans for i from 0
+                             when (and span (> (car span) 1))
+                             do (let ((extra (- (nth 4 c) (funcall span-width i (car span))))
+                                      (last (+ i (car span) -1)))
+                                  (when (> extra 0)
+                                    (puthash last (+ extra (gethash last widths 0)) widths)))))
+                ;; pad
+                (cl-loop
+                 for row in rows
+                 for r from 0
+                 for rspans in spans
+                 do
+                 (if (car row)
+                     ;; a rule: blank where a cell merged across rows continues
+                     (let ((next (cl-loop for k from (1+ r) below (length rows)
+                                          for g = (nth k grid)
+                                          when g return g)))
+                       (cl-loop
+                        for (b e) in (cdr row)
+                        for i from 0
+                        do (org-slideboard--table-pad
+                            b e (+ (gethash i widths 0) (* 2 spc))
+                            (unless (eq (org-slideboard--span-marker (nth i next)) 'up)
+                              '(:inherit org-table :strike-through t)))))
+                   (cl-loop
+                    for (b e cb ce w text) in (cdr row)
+                    for span in rspans
+                    for i from 0
+                    do
+                    (let* ((n (if span (car span) 1))
+                           (col (funcall span-width i n))
+                           (marker (org-slideboard--span-marker text))
+                           ;; the pad at the right of the cell, lined up below
+                           (right
+                            (cond
+                             ;; merged into the cell on its left: shown as
+                             ;; nothing, with the | before it
+                             ((null span)
+                              (org-slideboard--table-pad (1- b) b 0)
+                              (org-slideboard--table-pad b e 0)
+                              nil)
+                             ((or marker (>= cb ce))
+                              (org-slideboard--table-pad b e (+ col (* 2 spc))))
+                             ;; across columns: centred
+                             ((> n 1)
+                              (let ((left (+ spc (/ (- col w) 2))))
+                                (org-slideboard--table-pad b cb left)
+                                (org-slideboard--table-pad ce e (- (+ col (* 2 spc)) w left))))
+                             ;; Org pads numbers on the left
+                             ((> (- cb b) 1)
+                              (org-slideboard--table-pad b cb (+ (- col w) spc))
+                              (org-slideboard--table-pad ce e spc))
+                             (t
+                              (org-slideboard--table-pad b cb spc)
+                              (org-slideboard--table-pad ce e (+ (- col w) spc))))))
+                      (when right
+                        (push (list right (nth 1 (nth (+ i n -1) (cdr row))) (+ i n -1))
+                              fixes))))))
+                ;; the widths were computed from measured cells and an
+                ;; assumed width of a separator, which faces such as a box
+                ;; can change; line every | up with the column lines as
+                ;; displayed in a row without merged cells
+                (let ((ref (cl-loop
+                            for row in rows for rspans in spans
+                            when (and (not (car row)) (cl-every #'identity rspans))
+                            return (mapcar (lambda (c)
+                                             (org-slideboard--table-line-x win (nth 1 c)))
+                                           (cdr row)))))
+                  (when ref
+                    ;; from left to right, as each change moves what follows
+                    (dolist (fix (sort fixes (lambda (a b) (< (nth 1 a) (nth 1 b)))))
+                      (let* ((ov (nth 0 fix))
+                             (want (nth (nth 2 fix) ref))
+                             (have (org-slideboard--table-line-x win (nth 1 fix)))
+                             (spec (and ov (overlay-get ov 'display))))
+                        (when (and spec want (/= want have))
+                          (overlay-put ov 'display
+                                       `(space :width (,(max 0 (+ (car (plist-get (cdr spec) :width))
+                                                                    (- want have)))))))))))))))))))
 
 ;;** Title and section pages
 
@@ -2787,16 +3045,18 @@ Macros that cannot be expanded are removed.  TEMPLATES defaults to
         (replace-regexp-in-string
          "{{{\\([^}(]+\\)\\(?:(\\(\\(?:.\\|\n\\)*?\\))\\)?}}}"
          (lambda (m)
-           (let* ((key (downcase (string-trim (match-string 1 m))))
-                  (args (and (match-string 2 m)
-                             (org-macro-extract-arguments (match-string 2 m))))
-                  (value (ignore-errors
-                           (org-macro-expand (list 'macro (list :key key :args args))
-                                             templates))))
-             (if value
-                 (org-slideboard--expand-macros-in-string
-                  (org-slideboard--strip-snippets value) templates (1+ depth))
-               "")))
+           ;; `replace-regexp-in-string' uses the match data after this
+           (save-match-data
+             (let* ((key (downcase (string-trim (match-string 1 m))))
+                    (args (and (match-string 2 m)
+                               (org-macro-extract-arguments (match-string 2 m))))
+                    (value (ignore-errors
+                             (org-macro-expand (list 'macro (list :key key :args args))
+                                               templates))))
+               (if value
+                   (org-slideboard--expand-macros-in-string
+                    (org-slideboard--strip-snippets value) templates (1+ depth))
+		 ""))))
          string t t)))))
 
 (defun org-slideboard--keyword-lines (value)
@@ -3124,6 +3384,7 @@ presentation buffer, widened."
   (widen)
   (org-slideboard--apply-keyword-settings)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
+  (org-slideboard--save-scales)
   (org-slideboard-initialize)
   (org-slideboard--goto-slide-heading)
   (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
@@ -3198,6 +3459,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
 
   (org-slideboard--apply-keyword-settings)
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
+  (org-slideboard--save-scales)
   (org-slideboard-initialize)
   (org-slideboard--setup-show)
   (goto-char (point-min))
@@ -3226,7 +3488,9 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (when (and org-slideboard--start-text-scale org-slideboard-presentation-file)
     (with-current-buffer (org-slideboard--show-buffer)
       (setq org-slideboard-text-scale org-slideboard--start-text-scale)))
-  (setq org-slideboard--start-text-scale nil)
+  (org-slideboard--restore-scales)
+  (setq org-slideboard--start-text-scale nil
+        org-slideboard--start-scales nil)
   (dolist (buf org-slideboard--scaled-buffers)
     (when (buffer-live-p buf)
       (with-current-buffer buf (text-scale-set 0))))
@@ -3390,13 +3654,16 @@ Do nothing if KEY is nil or no window shows that frame."
   "Put the text and the frames of all slides back as the show started.
 The text of all frames goes back to its starting size, including frames
 changed on their own, and frames resized by dragging get their usual
-size again.  Slide titles and pages keep their size."
+size again.  The sizes of the slide titles, the header and the pages
+also go back to where they were."
   (interactive)
   (org-slideboard--clear-frame-sizes)
   (org-slideboard--clear-frame-shares)
   (when org-slideboard--start-text-scale
     (with-current-buffer (org-slideboard--show-buffer)
       (setq org-slideboard-text-scale org-slideboard--start-text-scale)))
+  ;; and the titles, header and pages, see `org-slideboard-increase-all-text-size'
+  (org-slideboard--restore-scales)
   (when org-slideboard--running
     (let ((key org-slideboard--frame-key)
           (pos (point)))
@@ -3460,7 +3727,8 @@ Slide titles and pages are set back to their size.  For
 (defun org-slideboard-increase-text-size ()
   "Increase the text size of all frames of all slides.
 Slide titles keep their size.  To change one frame only, use
-\\[org-slideboard-increase-frame-text-size]."
+\\[org-slideboard-increase-frame-text-size]; to change the titles and
+everything else too, \\[org-slideboard-increase-all-text-size]."
   (interactive)
   (org-slideboard--change-text-scale 1))
 
@@ -3470,6 +3738,57 @@ Slide titles keep their size.  To change one frame only, use
 See `org-slideboard-increase-text-size'."
   (interactive)
   (org-slideboard--change-text-scale -1))
+
+(defconst org-slideboard--all-scales
+  '(org-slideboard-text-scale org-slideboard-title-text-scale
+    org-slideboard-header-text-scale org-slideboard-page-text-scale)
+  "The text scales of the show, which can be changed together.")
+
+(defun org-slideboard--save-scales ()
+  "Remember the text scales of the current buffer, to restore them later."
+  (setq org-slideboard--start-scales
+        (mapcar (lambda (v) (cons v (symbol-value v))) org-slideboard--all-scales)))
+
+(defun org-slideboard--restore-scales ()
+  "Put the text scales back as they were when the show started."
+  (when (and org-slideboard--start-scales org-slideboard-presentation-file)
+    (with-current-buffer (org-slideboard--show-buffer)
+      (dolist (s org-slideboard--start-scales)
+        (set (car s) (cdr s))))))
+
+(defun org-slideboard--change-all-text-scale (delta)
+  "Change all text sizes of the show by DELTA steps, keeping proportions.
+That is the text of the frames, the slide titles, the header and the
+title and section pages, see `org-slideboard--all-scales'."
+  ;; in the presentation buffer, where the values may be local to it
+  (with-current-buffer (org-slideboard--show-buffer)
+    (dolist (v org-slideboard--all-scales)
+      (set v (+ (or (symbol-value v)
+                    (if (eq v 'org-slideboard-page-text-scale) 5 0))
+                delta))))
+  (when org-slideboard--running
+    (if (equal (buffer-name) org-slideboard--page-buffer)
+        (org-slideboard-goto-slide org-slideboard-current-slide-number)
+      (let ((key org-slideboard--frame-key)
+            (pos (point)))
+        (org-slideboard-goto-slide org-slideboard-current-slide-number)
+        (org-slideboard--select-frame key pos))))
+  (with-current-buffer (org-slideboard--show-buffer)
+    (message "All text sizes: text %s, titles %s"
+             org-slideboard-text-scale org-slideboard-title-text-scale)))
+
+(defun org-slideboard-increase-all-text-size ()
+  "Make everything on the slides larger, keeping proportions.
+The text, the slide titles, the header and the title and section pages
+all grow by one step.  \\[org-slideboard-reset-text-size] puts them back."
+  (interactive)
+  (org-slideboard--change-all-text-scale 1))
+
+(defun org-slideboard-decrease-all-text-size ()
+  "Make everything on the slides smaller, keeping proportions.
+See `org-slideboard-increase-all-text-size'."
+  (interactive)
+  (org-slideboard--change-all-text-scale -1))
 
 ;;** Export to PDF
 
@@ -3581,6 +3900,9 @@ otherwise it comes back to the slide it was on."
     (define-key map (kbd "\e\eq") 'org-slideboard-stop-slideshow)
     (define-key map (kbd "\e\ep") 'org-slideboard-export-pdf)
     (define-key map (kbd "\e\e0") 'org-slideboard-reset-text-size)
+    ;; everything together, keeping proportions
+    (define-key map (kbd "C-c >") 'org-slideboard-increase-all-text-size)
+    (define-key map (kbd "C-c <") 'org-slideboard-decrease-all-text-size)
     map)
   "Keys of the show, active only in slide windows.
 They work in the title strip, the frames and the title and section
@@ -3597,6 +3919,8 @@ or `keymap-set' on this map.")
     ["Open this slide" org-slideboard-open-slide t]
     ["Goto slide" org-slideboard-goto-slide t]
     ["Table of contents" org-slideboard-toc t]
+    ["Everything larger" org-slideboard-increase-all-text-size t]
+    ["Everything smaller" org-slideboard-decrease-all-text-size t]
     ["Save as PDF" org-slideboard-export-pdf t]
     ["Stop slide show"  org-slideboard-stop-slideshow t]))
 

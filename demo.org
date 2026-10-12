@@ -5,6 +5,7 @@
 #+OPTIONS: toc:nil H:2 tags:nil num:nil
 #+LATEX_CLASS: beamer
 #+LATEX_HEADER: \setbeamersize{text margin left=5mm,text margin right=5mm}
+#+LATEX_HEADER: \usepackage{multirow}
 #+MACRO: pkg /org-slideboard/
 #+MACRO: hl @@latex:\textbf{\color{$1}$2}@@
 #+SLIDEBOARD_MACRO: hl *$2*
@@ -488,6 +489,18 @@ columns are aligned to what is shown, not to the text in the file:
 
 Numbers stay right-aligned, as Org aligns them.
 =#+SLIDEBOARD: align-tables:nil= keeps Org's own alignment.
+
+** Merged cells                                                       :slide:
+A cell holding =<<= is merged with the cell on its left, and one holding
+=^^= with the cell above:
+
+| Production | <<    | Trade   |
+|------------+-------+---------|
+| Area       | Yield | Exports |
+| Crops      | Wheat |      10 |
+| ^^         | Rice  |      20 |
+
+In the beamer export they become =\multicolumn= and =\multirow=.
 
 * Code and results
 
