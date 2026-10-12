@@ -471,6 +471,22 @@ To start every show at another size, set =org-slideboard-text-scale=, or
 =#+SLIDEBOARD: text-scale:3= for one presentation (=title-scale:= for
 titles).
 
+One slide (or all the slides of a section) can have its own sizes, e.g.
+smaller text for a slide with a wide table:
+
+#+begin_example
+,** Processed products                                          :slide:
+:PROPERTIES:
+:SLIDEBOARD_TEXT_SCALE: 1
+:SLIDEBOARD_TITLE_SCALE: 1
+:END:
+#+end_example
+
+The values are like those of =text-scale:= and =title-scale:=.  The keys
+above still work on such a slide: ~C-=~ / =C--= and =C-c >= / =C-c <= move it
+by as many steps as the other slides, and =C-c {= / =C-c }= change its
+frames on top of that.
+
 ** Resizing frames
 Code and results start with =org-slideboard-src-code-width= (0.5) of the
 space for the code, and beamer columns with their =BEAMER_col= widths.  When

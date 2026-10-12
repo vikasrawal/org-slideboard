@@ -216,6 +216,14 @@ the property SLIDEBOARD_MARGINS."
                  (list :tag "Left and right" number number))
   :group 'org-slideboard)
 
+(defvar org-slideboard--slide-text-scale nil
+  "The text size of the frames of the slide being shown, or nil.
+See `org-slideboard--scale-setting'.")
+
+(defvar org-slideboard--slide-title-scale nil
+  "The text size of the title of the slide being shown, or nil.
+See `org-slideboard--scale-setting'.")
+
 (defvar org-slideboard--slide-margins nil
   "The margins of the slide being shown, see `org-slideboard-margins'.")
 
@@ -1371,15 +1379,33 @@ and cleared otherwise; el-easydraw's drawings likewise."
                   steps)
             org-slideboard--frame-offsets))))
 
+(defun org-slideboard--scale-setting (pos prop var)
+  "Return the text size VAR for the slide at heading POS.
+VAR is `org-slideboard-text-scale' or `org-slideboard-title-text-scale'.
+If the slide, or a heading above it, has the property PROP (e.g.
+SLIDEBOARD_TEXT_SCALE), its value is used, moved by as many steps as
+VAR has been changed during the show, e.g. with \\[org-slideboard-increase-text-size];
+otherwise the value of VAR.  The current buffer is the presentation
+buffer."
+  (let* ((v (org-with-wide-buffer (org-entry-get pos prop t)))
+         (current (or (symbol-value var) 0)))
+    (if (and v (string-match-p "\\`[ \t]*-?[0-9]+\\(?:\\.[0-9]*\\)?[ \t]*\\'" v))
+        (let ((start (or (cdr (assq var org-slideboard--start-scales)) current)))
+          (+ (string-to-number v) (- current (or start 0))))
+      current)))
+
 (defun org-slideboard--set-text-scale (wins)
   "Give the frames in WINS their text size.
-That is `org-slideboard-text-scale' plus the frame's own change, see
+That is the slide's text size (`org-slideboard-text-scale', or the
+slide's SLIDEBOARD_TEXT_SCALE property, see
+`org-slideboard--scale-setting') plus the frame's own change, see
 `org-slideboard-increase-frame-text-size'.  Equations and tables are
 laid out again for that size."
   (let ((org-slideboard--scaling t))
     (dolist (w wins)
       (with-current-buffer (window-buffer w)
-        (text-scale-set (+ (or org-slideboard-text-scale 0)
+        (text-scale-set (+ (or org-slideboard--slide-text-scale
+                               org-slideboard-text-scale 0)
                            (if org-slideboard--frame-key
                                (org-slideboard--frame-offset org-slideboard--frame-key)
                              0)))
@@ -2022,7 +2048,8 @@ must be the base buffer, narrowed to the slide."
     ;; the title strip
     (narrow-to-region (point-min) title-end)
     (let ((org-slideboard--scaling t))
-      (text-scale-set (or org-slideboard-title-text-scale 0)))
+      (text-scale-set (or org-slideboard--slide-title-scale
+                          org-slideboard-title-text-scale 0)))
     (org-slideboard--hide-clutter (point-min) (point-max))
     (org-slideboard--hide-drawers)
     (org-slideboard--expand-macros)
@@ -3394,6 +3421,13 @@ On a title or section page, show that page again."
     (setq org-slideboard--slide-src (org-slideboard--src-setting (point)))
     (setq org-slideboard--slide-margins (or (org-slideboard--margins-setting (point))
                                             org-slideboard-margins))
+    ;; text sizes of this slide, see `org-slideboard--scale-setting'
+    (setq org-slideboard--slide-text-scale
+          (org-slideboard--scale-setting (point) "SLIDEBOARD_TEXT_SCALE"
+                                         'org-slideboard-text-scale)
+          org-slideboard--slide-title-scale
+          (org-slideboard--scale-setting (point) "SLIDEBOARD_TITLE_SCALE"
+                                         'org-slideboard-title-text-scale))
     ;; beamer overlays: the parts that appear in steps
     (setq org-slideboard--slide-covered (or (org-slideboard--covered-setting (point))
                                             org-slideboard-covered))
@@ -3837,7 +3871,8 @@ Slide titles and pages are set back to their size.  For
         (org-slideboard--set-frame-offset
          org-slideboard--frame-key
          (if text-scale-mode
-             (- text-scale-mode-amount (or org-slideboard-text-scale 0))
+             (- text-scale-mode-amount (or org-slideboard--slide-text-scale
+                                           org-slideboard-text-scale 0))
            0))
         ;; after the zoom command is done
         (run-at-time 0 nil (lambda ()
@@ -3852,7 +3887,8 @@ Slide titles and pages are set back to their size.  For
                         (expand-file-name org-slideboard-presentation-file))))
         (let ((scale (if (equal (buffer-name) org-slideboard--page-buffer)
                          org-slideboard-page-text-scale
-                       org-slideboard-title-text-scale)))
+                       (or org-slideboard--slide-title-scale
+                           org-slideboard-title-text-scale))))
           (run-at-time 0 nil (lambda ()
                                (when (buffer-live-p buf)
                                  (with-current-buffer buf
