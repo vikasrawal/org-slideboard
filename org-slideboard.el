@@ -169,6 +169,56 @@ so a frame keeps its size when its slide is shown again.")
   "Start of this frame's text in the presentation buffer, or nil.
 Set in the indirect buffers that show the frames of a slide.")
 
+(defcustom org-slideboard-hide-cursor t
+  "If non-nil, the cursor is hidden while a slide is shown.
+It comes back, as you have it, as soon as you move it, click or type,
+and is hidden again when you go to another slide.  Set to nil to leave
+the cursor alone during the show."
+  :type 'boolean
+  :group 'org-slideboard)
+
+(defvar org-slideboard--saved-cursor nil
+  "The frame's `cursor-type' before the show, as (VALUE), or nil.
+See `org-slideboard--cursor-save'.")
+
+(defconst org-slideboard--cursor-hiding-commands
+  '(org-slideboard-next-slide org-slideboard-previous-slide
+    org-slideboard-goto-slide org-slideboard-execute-slide
+    org-slideboard-toc org-slideboard-open-slide org-slideboard-start-slideshow)
+  "Commands after which the cursor is hidden, see `org-slideboard-hide-cursor'.")
+
+(defun org-slideboard--cursor-save ()
+  "Hide the cursor for the show, once per show, if `org-slideboard-hide-cursor'.
+The current buffer is the presentation buffer."
+  (when (and org-slideboard-hide-cursor (not org-slideboard--saved-cursor))
+    (setq org-slideboard--saved-cursor (list (frame-parameter nil 'cursor-type)))
+    (modify-frame-parameters nil '((cursor-type . nil)))
+    (add-hook 'post-command-hook #'org-slideboard--cursor-follow)))
+
+(defvar org-slideboard--running)
+
+(defun org-slideboard--cursor-follow ()
+  "Show the cursor when it is used, hide it when the slide changes.
+For `post-command-hook' during the show, see `org-slideboard-hide-cursor'."
+  (when (and org-slideboard--running org-slideboard--saved-cursor
+             (symbolp this-command) this-command)
+    (let ((want (cond
+                 ((memq this-command org-slideboard--cursor-hiding-commands) nil)
+                 ((or (string-prefix-p "org-slideboard-" (symbol-name this-command))
+                      (memq this-command '(ignore handle-switch-frame mouse-movement)))
+                  'keep)
+                 (t (car org-slideboard--saved-cursor)))))
+      (unless (or (eq want 'keep)
+                  (equal want (frame-parameter nil 'cursor-type)))
+        (modify-frame-parameters nil `((cursor-type . ,want)))))))
+
+(defun org-slideboard--cursor-restore ()
+  "Put the cursor back as it was before the show."
+  (remove-hook 'post-command-hook #'org-slideboard--cursor-follow)
+  (when org-slideboard--saved-cursor
+    (modify-frame-parameters nil `((cursor-type . ,(car org-slideboard--saved-cursor))))
+    (setq org-slideboard--saved-cursor nil)))
+
 (defvar org-slideboard--previews 'unknown
   "The image previews of the presentation buffer before the show.
 A list (ORG EDRAW): whether Org's inline images and el-easydraw's
@@ -2353,6 +2403,7 @@ Parts that are functions can only be set in the configuration."
     ("title-page" org-slideboard-title-page booleanp)
     ("section-pages" org-slideboard-section-pages booleanp)
     ("animate" org-slideboard-animate-pages booleanp)
+    ("hide-cursor" org-slideboard-hide-cursor booleanp)
     ("theme" org-slideboard-theme org-slideboard--theme-p)
     ("header-height" org-slideboard-header-height numberp)
     ("header-scale" org-slideboard-header-text-scale numberp)
@@ -3697,6 +3748,7 @@ presentation buffer, widened."
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard--save-scales)
   (org-slideboard--save-previews)
+  (org-slideboard--cursor-save)
   (org-slideboard-initialize)
   (org-slideboard--goto-slide-heading)
   (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
@@ -3774,6 +3826,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (setq org-slideboard--start-text-scale org-slideboard-text-scale)
   (org-slideboard--save-scales)
   (org-slideboard--save-previews)
+  (org-slideboard--cursor-save)
   (org-slideboard-initialize)
   (org-slideboard--setup-show)
   (goto-char (point-min))
@@ -3846,6 +3899,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (org-slideboard--unbeautify)
   (org-slideboard--restore-keyword-settings)
   (org-slideboard--restore-theme)
+  (org-slideboard--cursor-restore)
   (setq org-slideboard--running nil)
   (org-slideboard-mode -1))
 

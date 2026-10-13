@@ -1025,6 +1025,13 @@ the presentation again:
 Note: in variable-pitch text, code blocks can lose their alignment.  Tables
 are re-aligned during the show (see [[*Tables][Tables]]).
 
+** Cursor
+While a slide is shown, the cursor is hidden, so it does not blink at
+the audience.  It comes back, as you have it, as soon as you move it,
+click or type, and is hidden again when you go to another slide.  The
+text-size keys leave it as it is.  =#+SLIDEBOARD: hide-cursor:nil= (or
+=org-slideboard-hide-cursor=) leaves the cursor alone during the show.
+
 ** Theme
 A presentation can have its own Emacs theme, e.g. a light one for a
 projector, while you keep your usual theme for everything else:
@@ -1082,6 +1089,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =section-pages=     | =org-slideboard-section-pages=                        | =t= / =nil=                           |
 | =animate=           | =org-slideboard-animate-pages=                        | =t= / =nil=                           |
 | =theme=             | =org-slideboard-theme=                                | theme name, or =nil=                  |
+| =hide-cursor=       | =org-slideboard-hide-cursor=                          | =t= / =nil=                           |
 | =header-height=     | =org-slideboard-header-height=                        | number                                |
 | =header-scale=      | =org-slideboard-header-text-scale=                    | number                                |
 | =export-steps=      | =org-slideboard-export-steps=                         | =all= / =last=                        |
@@ -1159,6 +1167,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-section-pages=             | t                                              | show section pages                                                 |
 | =org-slideboard-animate-pages=             | t                                              | animate the title and section pages                                |
 | =org-slideboard-theme=                     | nil                                            | Emacs theme during the show (nil: keep the current one)            |
+| =org-slideboard-hide-cursor=               | t                                              | hide the cursor until it is moved or used                          |
 | =org-slideboard-page-text-scale=           | 5                                              | text scale of the title and section pages                          |
 | =org-slideboard-slide-tag=                 | "slide"                                        | tag that marks slides                                              |
 | =org-slideboard-footline=                  | ='("%a" "%t" "%n / %N")=                       | information strip on every slide, see [[*Information strip][Information strip]]            |
