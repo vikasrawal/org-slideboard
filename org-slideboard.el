@@ -138,6 +138,13 @@ change the selected frame only.  Slide titles have their own size,
   :type 'integer
   :group 'org-slideboard)
 
+(defcustom org-slideboard-title-space 0.25
+  "Extra space below the slide title, as a fraction of the title's height.
+It keeps the lower part of letters such as p and g from being cut
+off, whatever the font of the title.  Use 0 for none."
+  :type 'number
+  :group 'org-slideboard)
+
 (defcustom org-slideboard-title-text-scale 2
   "Text scale of the slide titles, the heading strip at the top of a slide.
 The size keys do not change it."
@@ -2167,6 +2174,9 @@ must be the base buffer, narrowed to the slide."
     (setq strip (org-slideboard--show-footline title-win))
     ;; the header above the title
     (setq header (org-slideboard--show-header title-win))
+    ;; its final height now, before the title strip is fitted below it:
+    ;; resizing it later would take the space from the title
+    (org-slideboard--fit-header header)
     ;; the title strip
     (narrow-to-region (point-min) title-end)
     (let ((org-slideboard--scaling t))
@@ -2186,6 +2196,16 @@ must be the base buffer, narrowed to the slide."
            (i 1))
       (org-slideboard--apply-margins title-win)
       (fit-window-to-buffer title-win (floor (window-total-height (frame-root-window)) 3) 1)
+      ;; room for the whole title, plus `org-slideboard-title-space': a
+      ;; strip fitted to the line can cut off the lower part of letters
+      ;; such as p and g.  Only its lower edge moves, so the header
+      ;; above keeps its height.
+      (let* ((need (cdr (window-text-pixel-size title-win)))
+             (want (+ need (round (* (or org-slideboard-title-space 0) need))))
+             (delta (- want (window-body-height title-win t)))
+             (window-resize-pixelwise t))
+        (when (> delta 0)
+          (ignore-errors (adjust-window-trailing-edge title-win delta nil t))))
       (when intro
         (let ((rest (split-window win nil 'below)))
           (org-slideboard--setup-column-window win base intro 0)
@@ -2226,7 +2246,7 @@ must be the base buffer, narrowed to the slide."
     (when (window-live-p strip)
       (fit-window-to-buffer strip nil 1)
       (org-slideboard--align-footline strip))
-    (org-slideboard--fit-header header)
+
     (select-window title-win)
     ;; keep point on the heading: at the end of a hidden drawer below it,
     ;; the strip would scroll to show point and the heading would be lost
@@ -2340,6 +2360,7 @@ Parts that are functions can only be set in the configuration."
     ("page-scale" org-slideboard-page-text-scale numberp)
     ("text-scale" org-slideboard-text-scale numberp)
     ("title-scale" org-slideboard-title-text-scale numberp)
+    ("title-space" org-slideboard-title-space numberp)
     ("image-width" org-slideboard-image-width-fraction numberp)
     ("image-height" org-slideboard-image-height-fraction numberp)
     ("clutter" org-slideboard-hide-clutter booleanp)

@@ -1088,6 +1088,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =page-scale=        | =org-slideboard-page-text-scale=                      | number                                |
 | =text-scale=        | =org-slideboard-text-scale=                           | number                                |
 | =title-scale=       | =org-slideboard-title-text-scale=                     | number                                |
+| =title-space=       | =org-slideboard-title-space=                          | number (fraction of the title height) |
 | =image-width=       | =org-slideboard-image-width-fraction=                 | number                                |
 | =image-height=      | =org-slideboard-image-height-fraction=                | number                                |
 | =clutter=           | =org-slideboard-hide-clutter=                         | =t= / =nil=                           |
@@ -1130,6 +1131,7 @@ that is in effect (the local one if there is one).
 |--------------------------------------------+------------------------------------------------+--------------------------------------------------------------------|
 | =org-slideboard-text-scale=                | 2                                              | text size of the frames of all slides                              |
 | =org-slideboard-title-text-scale=          | 2                                              | text size of slide titles                                          |
+| =org-slideboard-title-space=               | 0.25                                           | extra space below slide titles, as a fraction of their height      |
 | =org-slideboard-zoom-resizes-frame=        | t                                              | Emacs's zoom keys resize the selected frame for the show           |
 | =org-slideboard-divider-width=             | 6                                              | width in pixels of the draggable line between frames side by side  |
 | =org-slideboard-image-width-fraction=      | 0.8                                            | maximum image width, as a fraction of the window width             |
