@@ -562,12 +562,14 @@ Press =C-c C-c= in the code window and watch the time change.
 
 ** Code on the left, results on the right                             :slide:
 :PROPERTIES:
-:SLIDEBOARD_SRC_SPLIT: lr
+:SLIDEBOARD_SRC_SPLIT: lr40
 :END:
 The property =SLIDEBOARD_SRC_SPLIT= arranges code and results: =bt= (the
 default), =tb=, =lr= or =rl=, naming where the code goes and then the results.
-Drag the line between them to give one more room; the slide remembers it,
-and =M-ESC 0= puts it back.
+A number after it is the results' share in percent: this slide has =lr40=,
+so the results get 40% of the width and the code the rest.  Drag the line
+between them to give one more room; the slide remembers it, and =M-ESC 0=
+puts it back.
 
 #+begin_src emacs-lisp :exports both
 (let ((prices '(1.20 0.50 6.00))
@@ -588,14 +590,14 @@ and =M-ESC 0= puts it back.
 A column that holds a code block is divided into code and results.
 
 This column is text only; the other one has
-=SLIDEBOARD_SRC: both= and =SLIDEBOARD_SRC_SPLIT: tb=, so its code is shown,
-above its results.
+=SLIDEBOARD_SRC: both= and =SLIDEBOARD_SRC_SPLIT: tb30=, so its code is
+shown above its results, which get 30% of the height.
 
 *** Code                                                              :BMCOL:
 :PROPERTIES:
 :BEAMER_col: 0.6
 :SLIDEBOARD_SRC: both
-:SLIDEBOARD_SRC_SPLIT: tb
+:SLIDEBOARD_SRC_SPLIT: tb30
 :END:
 #+begin_src emacs-lisp :exports results
 (mapconcat (lambda (n) (number-to-string (* n n)))
@@ -713,18 +715,25 @@ Each key sets an =org-slideboard-...= variable; the README has the table.
 ** Settings for one slide or section                                  :slide:
 :PROPERTIES:
 :SLIDEBOARD_SRC: results
+:SLIDEBOARD_TEXT_SCALE: 1
 :END:
-Two settings can also be given as heading properties:
+These settings can also be given as heading properties:
 
-| Property               | Values                         |
-|------------------------+--------------------------------|
-| =SLIDEBOARD_SRC=       | =exports=, =results= or =both= |
-| =SLIDEBOARD_SRC_SPLIT= | =bt=, =tb=, =lr= or =rl=       |
+| Property                 | Values                                         |
+|--------------------------+------------------------------------------------|
+| =SLIDEBOARD_SRC=         | =exports=, =results= or =both=                 |
+| =SLIDEBOARD_SRC_SPLIT=   | =bt=, =tb=, =lr= or =rl=; with a share: =tb60= |
+| =SLIDEBOARD_MARGINS=     | =0.1=, or =(0.1 0.05)= for left and right      |
+| =SLIDEBOARD_HEADER=      | =nil=: no header                               |
+| =SLIDEBOARD_COVERED=     | =hidden= or =transparent=                      |
+| =SLIDEBOARD_TEXT_SCALE=  | text size, e.g. =1=                            |
+| =SLIDEBOARD_TITLE_SCALE= | title size                                     |
 
 Properties are inherited: set on a level-1 heading, they apply to every
-slide of that section; set on a beamer column, to that column only.  This
-slide sets =SLIDEBOARD_SRC: results= in its hidden drawer, so the block
-below shows only its result:
+slide of that section; =SLIDEBOARD_SRC= and =SLIDEBOARD_SRC_SPLIT= can also
+be set on a beamer column, for that column only.  This slide sets
+=SLIDEBOARD_SRC: results= and =SLIDEBOARD_TEXT_SCALE: 1= in its hidden
+drawer, so its text is smaller and the block below shows only its result:
 
 #+begin_src emacs-lisp :exports both
 (format "6 times 7 is %d" (* 6 7))

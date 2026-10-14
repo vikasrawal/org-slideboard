@@ -694,6 +694,12 @@ The value names where the code goes and then where the results go, like
 =rankdir= in Graphviz (=LR=, =TB=).  =bt=, the results above the code,
 is the default.
 
+A number from 1 to 99 after the value is the results' share, in percent,
+of the height (=tb=, =bt=) or of the width (=lr=, =rl=): =tb60= puts the
+code at the top and gives the results at the bottom 60% of the height, and
+=lr30= gives the results on the right 30% of the width.  Without a number,
+the code gets =org-slideboard-src-code-width= (0.5).
+
 It can be set for the whole presentation, for one file, and for one slide
 or section with the property =SLIDEBOARD_SRC_SPLIT=:
 
@@ -702,12 +708,12 @@ or section with the property =SLIDEBOARD_SRC_SPLIT=:
 
 ,** A long plot                                                        :slide:
 :PROPERTIES:
-:SLIDEBOARD_SRC_SPLIT: tb
+:SLIDEBOARD_SRC_SPLIT: tb60
 :END:
 #+end_example
 
-=org-slideboard-src-code-width= (0.5) is the code's share of the width
-(side by side) or of the height (top to bottom).  Plots in the results are
+Without a share in the value, =org-slideboard-src-code-width= (0.5) is the
+code's share of the width (side by side) or of the height (top to bottom).  Plots in the results are
 scaled to their window.  The code window shows
 the whole block, including its =#+begin_src= and =#+end_src= lines.  When
 code and results are one above the other (=tb=, =bt=), a grey bar in the
@@ -1079,7 +1085,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =align-tables=      | =org-slideboard-align-tables=                         | =t= / =nil=                           |
 | =src=               | =org-slideboard-src-display=                          | =exports= / =results= / =both=        |
 | =code-width=        | =org-slideboard-src-code-width=                       | number                                |
-| =src-split=         | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=             |
+| =src-split=         | =org-slideboard-src-split=                            | =lr= / =rl= / =tb= / =bt=, e.g. =tb60= |
 | =margins=           | =org-slideboard-margins=                              | number, =(LEFT RIGHT)=, or =nil=      |
 | =covered=           | =org-slideboard-covered=                              | =hidden= / =transparent=              |
 | =bullets=           | =org-slideboard-list-bullets=                         | list of strings, or =nil=             |

@@ -409,14 +409,19 @@ The value names where the code goes, then the results:
   tb  code at the top, results at the bottom
   bt  code at the bottom, results at the top (the default)
 
-as with rankdir in Graphviz.  It can be set for one file with
+as with rankdir in Graphviz.  A number of 1 to 99 after it is the
+results' share, in percent, of the height (tb, bt) or the width (lr,
+rl): tb60 puts the code at the top and gives the results at the
+bottom 60% of the height.  Without it, the code gets
+`org-slideboard-src-code-width'.  It can be set for one file with
 #+SLIDEBOARD: src-split:tb, and for one slide or beamer column (or a
 section) with the property SLIDEBOARD_SRC_SPLIT.  See
 `org-slideboard-src-display'."
   :type '(choice (const :tag "Code left, results right" lr)
                  (const :tag "Code right, results left" rl)
                  (const :tag "Code at the top, results at the bottom" tb)
-                 (const :tag "Code at the bottom, results at the top" bt))
+                 (const :tag "Code at the bottom, results at the top" bt)
+                 (symbol :tag "With the results' share, e.g. tb60"))
   :group 'org-slideboard)
 
 (defcustom org-slideboard-src-repl-functions
@@ -2353,9 +2358,22 @@ Parts that are functions can only be set in the configuration."
   "Return non-nil if VALUE is a valid `org-slideboard-footline-position'."
   (memq value '(bottom top)))
 
+(defun org-slideboard--src-split-parse (value)
+  "Parse VALUE, a value of `org-slideboard-src-split', as (BASE . SHARE).
+BASE is lr, rl, tb or bt, and SHARE is the results' share of the
+width or height, from a number of 1 to 99 after it (tb60: 0.6), or nil
+when there is none.  Return nil if VALUE is not valid."
+  (when (and value (symbolp value))
+    (let ((name (symbol-name value)))
+      (when (string-match "\\`\\(lr\\|rl\\|tb\\|bt\\)\\([0-9]\\{1,2\\}\\)?\\'" name)
+        (let ((base (intern (match-string 1 name)))
+              (nn (and (match-string 2 name) (string-to-number (match-string 2 name)))))
+          (unless (and nn (= nn 0))
+            (cons base (and nn (/ nn 100.0)))))))))
+
 (defun org-slideboard--src-split-p (value)
   "Return non-nil if VALUE is a valid `org-slideboard-src-split'."
-  (memq value '(lr rl tb bt)))
+  (and (org-slideboard--src-split-parse value) t))
 
 (defun org-slideboard--margins-p (value)
   "Return non-nil if VALUE is a valid `org-slideboard-margins'."
@@ -2721,14 +2739,32 @@ DIRECTION is right or below, and CODE-FIRST is non-nil when the code
 goes on the left or at the top.  POS is a heading, of a slide or a
 beamer column; its SLIDEBOARD_SRC_SPLIT property, or that of a heading
 above it, overrides `org-slideboard-src-split'."
+  (pcase (car (org-slideboard--src-split-setting pos))
+    ('rl '(right))
+    ('tb '(below . t))
+    ('bt '(below))
+    (_ '(right . t))))
+
+(defun org-slideboard--src-split-setting (pos)
+  "Return the split of code and results at heading POS, as (BASE . SHARE).
+From the SLIDEBOARD_SRC_SPLIT property of POS or a heading above it,
+or else `org-slideboard-src-split'; see `org-slideboard--src-split-parse'."
   (let* ((prop (org-entry-get pos "SLIDEBOARD_SRC_SPLIT" t))
-         (value (if prop (intern (downcase (string-trim prop))) org-slideboard-src-split))
-         (value (if (org-slideboard--src-split-p value) value org-slideboard-src-split)))
-    (pcase value
-      ('rl '(right))
-      ('tb '(below . t))
-      ('bt '(below))
-      (_ '(right . t)))))
+         (value (if prop (intern (downcase (string-trim prop))) org-slideboard-src-split)))
+    (or (org-slideboard--src-split-parse value)
+        (org-slideboard--src-split-parse org-slideboard-src-split)
+        '(bt))))
+
+(defun org-slideboard--src-split-shares (cols pos)
+  "Give the code and results columns COLS the shares set at heading POS.
+COLS are from `org-slideboard--slide-src-split'; with a share in the
+split setting (e.g. tb60), the results get that share of the space and
+the code the rest.  Return COLS."
+  (let ((share (cdr (org-slideboard--src-split-setting pos))))
+    (when share
+      (dolist (c cols)
+        (setcar c (if (eq (nth 4 c) 'code) (- 1.0 share) share)))))
+  cols)
 
 (defun org-slideboard--src-setting (pos)
   "Return the SLIDEBOARD_SRC property at heading POS, or above it.
@@ -2865,6 +2901,10 @@ The column heading's SLIDEBOARD_SRC property, if any, applies to it."
     (if (not inner)
         (progn (org-slideboard--setup-column-window win base col i)
                (list win))
+      (with-current-buffer base
+        (save-restriction
+          (widen)
+          (org-slideboard--src-split-shares inner (nth 1 col))))
       (let* ((split (with-current-buffer base
                       (save-restriction
                         (widen)
@@ -3630,6 +3670,7 @@ On a title or section page, show that page again."
     (setq org-slideboard--step (max 1 (min org-slideboard--step org-slideboard--steps)))
     (let ((src (and (not cols) (org-slideboard--slide-src-split))))
       (when src
+        (org-slideboard--src-split-shares src (point-min))
         (let ((split (org-slideboard--src-split-direction (point-min))))
           (setq cols (if (cdr split) src (reverse src))
                 src (car split))))
