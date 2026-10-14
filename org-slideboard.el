@@ -273,6 +273,11 @@ the property SLIDEBOARD_MARGINS."
                  (list :tag "Left and right" number number))
   :group 'org-slideboard)
 
+(defvar-local org-slideboard--frame-text-scale nil
+  "The text size of the frame shown in this buffer, or nil.
+From the SLIDEBOARD_TEXT_SCALE property of its beamer column, or of
+the slide, see `org-slideboard--scale-setting'.")
+
 (defvar org-slideboard--slide-text-scale nil
   "The text size of the frames of the slide being shown, or nil.
 See `org-slideboard--scale-setting'.")
@@ -1579,15 +1584,16 @@ buffer."
 
 (defun org-slideboard--set-text-scale (wins)
   "Give the frames in WINS their text size.
-That is the slide's text size (`org-slideboard-text-scale', or the
-slide's SLIDEBOARD_TEXT_SCALE property, see
+That is the frame's text size (`org-slideboard-text-scale', or the
+SLIDEBOARD_TEXT_SCALE property of its beamer column or slide, see
 `org-slideboard--scale-setting') plus the frame's own change, see
 `org-slideboard-increase-frame-text-size'.  Equations and tables are
 laid out again for that size."
   (let ((org-slideboard--scaling t))
     (dolist (w wins)
       (with-current-buffer (window-buffer w)
-        (text-scale-set (+ (or org-slideboard--slide-text-scale
+        (text-scale-set (+ (or org-slideboard--frame-text-scale
+                               org-slideboard--slide-text-scale
                                org-slideboard-text-scale 0)
                            (if org-slideboard--frame-key
                                (org-slideboard--frame-offset org-slideboard--frame-key)
@@ -1803,8 +1809,14 @@ See `org-slideboard-margins'.  The windows must be laid out already."
   "Show column COL of buffer BASE in window WIN.
 I is the column index, used to name the indirect buffer."
   (let ((buf (make-indirect-buffer
-              base (generate-new-buffer-name (format "*org-slideboard-col-%d*" i)) t)))
+              base (generate-new-buffer-name (format "*org-slideboard-col-%d*" i)) t))
+        ;; its text size: a column's SLIDEBOARD_TEXT_SCALE, or the slide's
+        (scale (with-current-buffer base
+                 (org-slideboard--scale-setting (nth 1 col) "SLIDEBOARD_TEXT_SCALE"
+                                                'org-slideboard-text-scale))))
     (push buf org-slideboard--column-buffers)
+    (with-current-buffer buf
+      (setq-local org-slideboard--frame-text-scale scale))
     (set-window-buffer win buf)
     ;; after `set-window-buffer', which resets the margins to the buffer's
     (org-slideboard--apply-margins win)
@@ -4110,7 +4122,8 @@ Slide titles and pages are set back to their size.  For
         (org-slideboard--set-frame-offset
          org-slideboard--frame-key
          (if text-scale-mode
-             (- text-scale-mode-amount (or org-slideboard--slide-text-scale
+             (- text-scale-mode-amount (or org-slideboard--frame-text-scale
+                                           org-slideboard--slide-text-scale
                                            org-slideboard-text-scale 0))
            0))
         ;; after the zoom command is done

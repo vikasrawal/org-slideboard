@@ -730,8 +730,9 @@ These settings can also be given as heading properties:
 | =SLIDEBOARD_TITLE_SCALE= | title size                                     |
 
 Properties are inherited: set on a level-1 heading, they apply to every
-slide of that section; =SLIDEBOARD_SRC= and =SLIDEBOARD_SRC_SPLIT= can also
-be set on a beamer column, for that column only.  This slide sets
+slide of that section; =SLIDEBOARD_SRC=, =SLIDEBOARD_SRC_SPLIT= and
+=SLIDEBOARD_TEXT_SCALE= can also be set on a beamer column, for that column
+only.  This slide sets
 =SLIDEBOARD_SRC: results= and =SLIDEBOARD_TEXT_SCALE: 1= in its hidden
 drawer, so its text is smaller and the block below shows only its result:
 
