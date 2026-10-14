@@ -183,6 +183,8 @@ strip, the frames, and the title and section pages.
 |-----------+------------------------------------------|
 | =PgDn=    | next step, or the next slide             |
 | =PgUp=    | previous step, or the previous slide     |
+| =C-c C-f= | next section                             |
+| =C-c C-b= | start of this section, or the previous   |
 | =C-c ;=   | show the current slide again             |
 | ~C-=~     | larger text in all frames of all slides  |
 | =C--=     | smaller text in all frames of all slides |

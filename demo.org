@@ -71,6 +71,7 @@ uses the feature it describes.
 | =M-x org-slideboard-start-slideshow= | start at the title page                |
 | =M-x org-slideboard-open-slide=      | start at the slide where the cursor is |
 | =PgDn= / =PgUp=                      | next / previous slide                  |
+| =C-c C-f= / =C-c C-b=                | next / previous section                |
 | =C-c ;=                              | show the current slide again           |
 | =M-ESC g=                            | go to a slide by number                |
 | =M-ESC t=                            | table of contents                      |

@@ -184,7 +184,8 @@ See `org-slideboard--cursor-save'.")
 (defconst org-slideboard--cursor-hiding-commands
   '(org-slideboard-next-slide org-slideboard-previous-slide
     org-slideboard-goto-slide org-slideboard-execute-slide
-    org-slideboard-toc org-slideboard-open-slide org-slideboard-start-slideshow)
+    org-slideboard-toc org-slideboard-open-slide org-slideboard-start-slideshow
+    org-slideboard-next-section org-slideboard-previous-section)
   "Commands after which the cursor is hidden, see `org-slideboard-hide-cursor'.")
 
 (defun org-slideboard--cursor-save ()
@@ -3711,6 +3712,51 @@ On a title or section page, show that page again."
     ;; clear the minibuffer
     (message "")))
 
+(defun org-slideboard--section-of (n)
+  "Return the section of slide N of the show, as the position of its heading.
+That is the level-1 heading above the slide (or the slide itself, at
+level 1), or of a section page; the title page has the section nil."
+  (let ((entry (cdr (assoc n org-slideboard-slide-list))))
+    (let ((m (cond ((markerp entry) entry)
+                   ((eq (car-safe entry) :section) (cadr entry)))))
+      (when (and m (marker-buffer m))
+        (with-current-buffer (marker-buffer m)
+          (org-with-wide-buffer
+           (goto-char m)
+           (while (org-up-heading-safe))
+           (point)))))))
+
+(defun org-slideboard-next-section ()
+  "Go to the first page of the next section of the show.
+That is its section page, or its first slide when there are no section
+pages, see `org-slideboard-section-pages'."
+  (interactive)
+  (let* ((n org-slideboard-current-slide-number)
+         (here (org-slideboard--section-of n))
+         (last (length org-slideboard-slide-list))
+         (k (1+ n)))
+    (while (and (<= k last) (equal (org-slideboard--section-of k) here))
+      (setq k (1+ k)))
+    (if (<= k last)
+        (org-slideboard-goto-slide k 1)
+      (message "This is the last section"))))
+
+(defun org-slideboard-previous-section ()
+  "Go to the start of this section, or of the previous one if already there.
+Like `org-slideboard-next-section', the start is the section page or the
+first slide of the section."
+  (interactive)
+  (let* ((n org-slideboard-current-slide-number)
+         (start (lambda (k)
+                  (let ((sec (org-slideboard--section-of k)))
+                    (while (and (> k 1) (equal (org-slideboard--section-of (1- k)) sec))
+                      (setq k (1- k)))
+                    k)))
+         (s (funcall start n)))
+    (cond ((< s n) (org-slideboard-goto-slide s 1))
+          ((> s 1) (org-slideboard-goto-slide (funcall start (1- s)) 1))
+          (t (message "This is the first section")))))
+
 (defun org-slideboard--show-step (step)
   "Show STEP of the current slide, keeping the selected frame."
   (setq org-slideboard--step step)
@@ -4316,6 +4362,9 @@ otherwise it comes back to the slide it was on."
     ;; F5-F9 are reserved for users, and C-c C-<letter> for major modes;
     ;; C-c followed by { } < > : ; is for minor modes like this one
     (define-key map (kbd "C-c ;") 'org-slideboard-execute-slide)
+    ;; as Org's same-level heading jumps: next and previous section
+    (define-key map (kbd "C-c C-f") 'org-slideboard-next-section)
+    (define-key map (kbd "C-c C-b") 'org-slideboard-previous-section)
     (define-key map (kbd "C--") 'org-slideboard-decrease-text-size)
     (define-key map (kbd "C-=") 'org-slideboard-increase-text-size)
     (define-key map (kbd "C-c }") 'org-slideboard-increase-frame-text-size)
@@ -4341,6 +4390,8 @@ or `keymap-set' on this map.")
     ["Start slide show" org-slideboard-start-slideshow t]
     ["Next slide" org-slideboard-next-slide t]
     ["Previous slide" org-slideboard-previous-slide t]
+    ["Next section" org-slideboard-next-section t]
+    ["Previous section" org-slideboard-previous-section t]
     ["Open this slide" org-slideboard-open-slide t]
     ["Goto slide" org-slideboard-goto-slide t]
     ["Table of contents" org-slideboard-toc t]
