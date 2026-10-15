@@ -1048,7 +1048,8 @@ text-size keys leave it as it is.  =#+SLIDEBOARD: hide-cursor:nil= (or
 
 ** Read-only
 During the show the presentation is read-only, so a stray key cannot
-change a slide.  To fix something on a slide, press ~C-x C-q~ in it and
+change a slide; typing into a slide says so and reminds you of the key
+to edit it.  To fix something on a slide, press ~C-x C-q~ in it and
 edit: the edits go into the file (save with ~C-x C-s~ as usual).  The
 slide stays editable until you go to another slide, which is read-only
 again.  Running code (~C-c C-c~) still writes its results, and a block

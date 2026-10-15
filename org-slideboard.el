@@ -251,6 +251,24 @@ running code and saving an edited block are not accidental."
   (let ((inhibit-read-only (or inhibit-read-only org-slideboard--running)))
     (apply fn args)))
 
+(defvar org-slideboard--saved-command-error-function nil
+  "The `command-error-function' before the show, as (VALUE), or nil.")
+
+(defun org-slideboard--read-only-error (data context caller)
+  "Say how to edit a read-only slide, for `command-error-function'.
+Other errors, with DATA, CONTEXT and CALLER, go to the function in use
+before the show."
+  (if (and (eq (car-safe data) 'buffer-read-only)
+           org-slideboard--running
+           (eq (org-slideboard--base-buffer) (org-slideboard--show-buffer)))
+      (progn
+        (ding)
+        (message "This slide is read-only; %s to edit it"
+                 (substitute-command-keys "\\[read-only-mode]")))
+    (funcall (or (car org-slideboard--saved-command-error-function)
+                 #'command-error-default-function)
+             data context caller)))
+
 (defun org-slideboard--read-only-start ()
   "Make the presentation read-only for the show, if `org-slideboard-read-only'.
 Once per show.  The current buffer is the presentation buffer."
@@ -258,6 +276,9 @@ Once per show.  The current buffer is the presentation buffer."
     (setq org-slideboard--saved-read-only (list buffer-read-only)
           org-slideboard--read-only (or org-slideboard-read-only buffer-read-only))
     (setq buffer-read-only org-slideboard--read-only)
+    (when org-slideboard--read-only
+      (setq org-slideboard--saved-command-error-function (list command-error-function)
+            command-error-function #'org-slideboard--read-only-error))
     (dolist (fn org-slideboard--writing-functions)
       (advice-add fn :around #'org-slideboard--allow-writes))))
 
@@ -266,6 +287,9 @@ Once per show.  The current buffer is the presentation buffer."
 The current buffer is the presentation buffer."
   (dolist (fn org-slideboard--writing-functions)
     (advice-remove fn #'org-slideboard--allow-writes))
+  (when org-slideboard--saved-command-error-function
+    (setq command-error-function (car org-slideboard--saved-command-error-function)
+          org-slideboard--saved-command-error-function nil))
   (when org-slideboard--saved-read-only
     (setq buffer-read-only (car org-slideboard--saved-read-only)))
   (setq org-slideboard--saved-read-only nil
