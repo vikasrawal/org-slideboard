@@ -162,11 +162,14 @@ headings.  A section whose slides are all commented out gets no page.
 * Running the presentation
 
 ** Starting and stopping
-| Command                                 | Does                                    |
-|-----------------------------------------+-----------------------------------------|
-| =M-x org-slideboard-start-slideshow=    | start at the beginning (the title page) |
-| menu /org-slideboard → Open this slide/ | start at the slide containing point     |
-| =M-x org-slideboard-stop-slideshow=     | stop and restore the buffer             |
+| Command                              | Does                                    |
+|--------------------------------------+-----------------------------------------|
+| =M-x org-slideboard-start-slideshow= | start at the beginning (the title page) |
+| =M-x org-slideboard-open-slide=      | start at the slide containing point     |
+| =M-x org-slideboard-stop-slideshow=  | stop and restore the buffer             |
+
+During the show, an /org-slideboard/ menu in the menu bar has these
+commands and the others of the show.
 
 Stopping removes the column windows and their buffers, un-hides
 everything, turns off the beautification modes that the presentation
@@ -526,7 +529,7 @@ C-l=, and laid out for the slides:
   =dvipng= a higher render scale gives sharper but slower images.
 - *Left aligned*: display equations start at the left margin, like the
   text.  Set =org-slideboard-center-display-math= to =t= to centre them in the
-  window or column, as LaTeX does.  Inline math always stays in the text.
+  window or column, as LaTeX does. Inline math always stays in the text.
 - *Own lines*: display equations inside a paragraph keep their own lines
   when the paragraph is rewrapped.
 - *Never wider than the window*: numbered environments such as =equation=
@@ -1043,6 +1046,18 @@ click or type, and is hidden again when you go to another slide.  The
 text-size keys leave it as it is.  =#+SLIDEBOARD: hide-cursor:nil= (or
 =org-slideboard-hide-cursor=) leaves the cursor alone during the show.
 
+** Read-only
+During the show the presentation is read-only, so a stray key cannot
+change a slide.  To fix something on a slide, press ~C-x C-q~ in it and
+edit: the edits go into the file (save with ~C-x C-s~ as usual).  The
+slide stays editable until you go to another slide, which is read-only
+again.  Running code (~C-c C-c~) still writes its results, and a block
+edited with ~C-c '~ can still be saved back.  When the show stops, the
+buffer is read-only only if it was before the show.
+
+To edit a lot during the show, turn this off with =#+SLIDEBOARD:
+read-only:nil= (or =org-slideboard-read-only=).
+
 ** Theme
 A presentation can have its own Emacs theme, e.g. a light one for a
 projector, while you keep your usual theme for everything else:
@@ -1101,6 +1116,7 @@ values come back.  Beamer and other exporters ignore the keyword.
 | =animate=           | =org-slideboard-animate-pages=                        | =t= / =nil=                           |
 | =theme=             | =org-slideboard-theme=                                | theme name, or =nil=                  |
 | =hide-cursor=       | =org-slideboard-hide-cursor=                          | =t= / =nil=                           |
+| =read-only=         | =org-slideboard-read-only=                            | =t= / =nil=                           |
 | =header-height=     | =org-slideboard-header-height=                        | number                                |
 | =header-scale=      | =org-slideboard-header-text-scale=                    | number                                |
 | =export-steps=      | =org-slideboard-export-steps=                         | =all= / =last=                        |
@@ -1179,6 +1195,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-animate-pages=             | t                                              | animate the title and section pages                                |
 | =org-slideboard-theme=                     | nil                                            | Emacs theme during the show (nil: keep the current one)            |
 | =org-slideboard-hide-cursor=               | t                                              | hide the cursor until it is moved or used                          |
+| =org-slideboard-read-only=                 | t                                              | the presentation is read-only during the show                      |
 | =org-slideboard-page-text-scale=           | 5                                              | text scale of the title and section pages                          |
 | =org-slideboard-slide-tag=                 | "slide"                                        | tag that marks slides                                              |
 | =org-slideboard-footline=                  | ='("%a" "%t" "%n / %N")=                       | information strip on every slide, see [[*Information strip][Information strip]]            |

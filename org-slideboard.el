@@ -220,6 +220,57 @@ For `post-command-hook' during the show, see `org-slideboard-hide-cursor'."
     (modify-frame-parameters nil `((cursor-type . ,(car org-slideboard--saved-cursor))))
     (setq org-slideboard--saved-cursor nil)))
 
+(defcustom org-slideboard-read-only t
+  "If non-nil, the presentation is read-only during the show.
+This keeps a slide from being changed by a stray key.  \\[read-only-mode]
+in a slide makes that slide editable until you go to another slide.
+When the show stops, the buffer is read-only only if it was before.
+Running code still writes its results, and an edited source block can
+still be saved back.  Set to nil to leave the buffer editable during
+the show."
+  :type 'boolean
+  :group 'org-slideboard)
+
+(defvar org-slideboard--read-only nil
+  "Non-nil if the slides of the running show are read-only.
+Set when the show starts, see `org-slideboard-read-only'.")
+
+(defvar org-slideboard--saved-read-only nil
+  "The presentation buffer's `buffer-read-only' before the show, as (VALUE).
+Nil if nothing is saved.")
+
+(defconst org-slideboard--writing-functions
+  '(org-babel-insert-result org-babel-remove-result
+    org-edit-src-save org-edit-src-exit)
+  "Functions that may write to the read-only presentation during the show.")
+
+(defun org-slideboard--allow-writes (fn &rest args)
+  "Call FN with ARGS, letting it change the read-only presentation.
+Around advice on `org-slideboard--writing-functions' during the show:
+running code and saving an edited block are not accidental."
+  (let ((inhibit-read-only (or inhibit-read-only org-slideboard--running)))
+    (apply fn args)))
+
+(defun org-slideboard--read-only-start ()
+  "Make the presentation read-only for the show, if `org-slideboard-read-only'.
+Once per show.  The current buffer is the presentation buffer."
+  (unless org-slideboard--saved-read-only
+    (setq org-slideboard--saved-read-only (list buffer-read-only)
+          org-slideboard--read-only (or org-slideboard-read-only buffer-read-only))
+    (setq buffer-read-only org-slideboard--read-only)
+    (dolist (fn org-slideboard--writing-functions)
+      (advice-add fn :around #'org-slideboard--allow-writes))))
+
+(defun org-slideboard--read-only-stop ()
+  "Put the presentation back as read-only or editable as it was before the show.
+The current buffer is the presentation buffer."
+  (dolist (fn org-slideboard--writing-functions)
+    (advice-remove fn #'org-slideboard--allow-writes))
+  (when org-slideboard--saved-read-only
+    (setq buffer-read-only (car org-slideboard--saved-read-only)))
+  (setq org-slideboard--saved-read-only nil
+        org-slideboard--read-only nil))
+
 (defvar org-slideboard--previews 'unknown
   "The image previews of the presentation buffer before the show.
 A list (ORG EDRAW): whether Org's inline images and el-easydraw's
@@ -1834,6 +1885,9 @@ I is the column index, used to name the indirect buffer."
       (if (fboundp 'org-fold-show-all) (org-fold-show-all) (outline-show-all))
       (narrow-to-region (nth 2 col) (nth 3 col))
       (setq org-slideboard--frame-key (nth 2 col))
+      ;; a frame is read-only like the show; C-x C-q here
+      ;; lasts until the slide changes, as the buffer is made afresh
+      (setq buffer-read-only org-slideboard--read-only)
       ;; the clone copied the base buffer's mode variables, but the face
       ;; remapping was reset above, so apply the beautify modes afresh
       (setq org-slideboard--beautified nil
@@ -2235,6 +2289,8 @@ must be the base buffer, narrowed to the slide."
          (window-min-height 1)
          (strip nil)
          (header nil))
+    ;; the title strip: editable only for the slide it was made so on
+    (setq buffer-read-only org-slideboard--read-only)
     ;; a window kept from the previous slide keeps its parameters
     (dolist (w (window-list))
       (set-window-parameter w 'org-slideboard-share nil))
@@ -2346,7 +2402,7 @@ must be the base buffer, narrowed to the slide."
                org-slideboard-hanging-indent org-slideboard-hide-emphasis-markers
                org-slideboard-hide-macro-markers org-slideboard-expand-macros
                org-slideboard-align-tables org-slideboard-zoom-resizes-frame
-               org-slideboard-center-display-math))
+               org-slideboard-center-display-math org-slideboard-read-only))
   (put var 'safe-local-variable #'booleanp))
 (dolist (var '(org-slideboard-text-scale org-slideboard-title-text-scale
                org-slideboard-page-text-scale org-slideboard-image-width-fraction
@@ -2435,6 +2491,7 @@ when there is none.  Return nil if VALUE is not valid."
     ("section-pages" org-slideboard-section-pages booleanp)
     ("animate" org-slideboard-animate-pages booleanp)
     ("hide-cursor" org-slideboard-hide-cursor booleanp)
+    ("read-only" org-slideboard-read-only booleanp)
     ("theme" org-slideboard-theme org-slideboard--theme-p)
     ("header-height" org-slideboard-header-height numberp)
     ("header-scale" org-slideboard-header-text-scale numberp)
@@ -3824,6 +3881,7 @@ presentation buffer, widened."
             (when (string= "slideboard-elisp" (car info))
               (org-slideboard--start-overlay start end))))))
     (add-to-invisibility-spec 'org-slideboard-slide))
+  (org-slideboard--read-only-start)
   (add-hook 'org-babel-after-execute-hook #'org-slideboard--after-execute)
   (add-hook 'org-src-mode-hook #'org-slideboard--src-edit-setup)
   (add-hook 'text-scale-mode-hook #'org-slideboard--text-scale-changed)
@@ -3834,8 +3892,9 @@ presentation buffer, widened."
           (or (frame-parameter nil 'right-divider-width) 0)))
   (set-frame-parameter nil 'right-divider-width org-slideboard-divider-width))
 
+;;;###autoload
 (defun org-slideboard-open-slide ()
-  "Start show at this slide."
+  "Start the show at the slide containing point."
   (interactive)
   (let ((pos (point)))
     (switch-to-buffer (org-slideboard--base-buffer))
@@ -3983,6 +4042,7 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
 
   (when org-slideboard-presentation-file (find-file org-slideboard-presentation-file))
   (widen)
+  (org-slideboard--read-only-stop)
   (org-slideboard-keys-mode -1)
   ;; the equation images were made for the slides
   (org-clear-latex-preview)
