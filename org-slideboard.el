@@ -3785,7 +3785,7 @@ On a title or section page, show that page again."
         (save-excursion
           (goto-char (match-beginning 0))
           (let* ((info (save-excursion
-                         (org-babel-get-src-block-info))))
+                         (org-babel-get-src-block-info 'no-eval))))
             (when (string= "slideboard-elisp" (car info))
               ;; fold code
               (org-cycle)
@@ -3901,7 +3901,7 @@ presentation buffer, widened."
                  (start (org-element-property :begin src))
                  (end (org-element-property :end src))
                  (info (save-excursion
-                         (org-babel-get-src-block-info))))
+                         (org-babel-get-src-block-info 'no-eval))))
             (when (string= "slideboard-elisp" (car info))
               (org-slideboard--start-overlay start end))))))
     (add-to-invisibility-spec 'org-slideboard-slide))
