@@ -3058,7 +3058,8 @@ would, so the results are written to the file as usual."
         (save-excursion
           (goto-char pos)
           (let ((org-slideboard--executing t))
-            (org-babel-execute-src-block)))))
+            (org-babel-execute-src-block
+             current-prefix-arg (org-babel-get-src-block-info))))))
     (org-slideboard--refresh-slide pos)))
 
 (defun org-slideboard--refresh-slide (&optional code-pos)
