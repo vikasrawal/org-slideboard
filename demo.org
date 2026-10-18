@@ -217,8 +217,10 @@ Select this column and press =C-c }= a few times.
 *** Right                                                             :BMCOL:
 :PROPERTIES:
 :BEAMER_col: 0.5
+:SLIDEBOARD_TEXT_SCALE: -1
 :END:
-This column keeps its size.
+This column keeps its size.  Its =SLIDEBOARD_TEXT_SCALE: -1= makes it
+smaller than Emacs's own text (0); slides start at 2.
 
 ** Resizing frames                                                    :slide:
 Frames start at their =BEAMER_col= widths, and code and results at
@@ -727,7 +729,7 @@ These settings can also be given as heading properties:
 | =SLIDEBOARD_MARGINS=     | =0.1=, or =(0.1 0.05)= for left and right      |
 | =SLIDEBOARD_HEADER=      | =nil=: no header                               |
 | =SLIDEBOARD_COVERED=     | =hidden= or =transparent=                      |
-| =SLIDEBOARD_TEXT_SCALE=  | text size, e.g. =1=                            |
+| =SLIDEBOARD_TEXT_SCALE=  | text size, e.g. =1=; =-1= for very small text  |
 | =SLIDEBOARD_TITLE_SCALE= | title size                                     |
 
 Properties are inherited: set on a level-1 heading, they apply to every
