@@ -482,7 +482,7 @@ smaller text for a slide with a wide table:
 #+begin_example
 ,** Processed products                                          :slide:
 :PROPERTIES:
-:SLIDEBOARD_TEXT_SCALE: 1
+:SLIDEBOARD_TEXT_SCALE: -1
 :SLIDEBOARD_TITLE_SCALE: 1
 :END:
 #+end_example
@@ -490,10 +490,13 @@ smaller text for a slide with a wide table:
 =SLIDEBOARD_TEXT_SCALE= can also be set on a beamer column, for the text of
 that column only; the other columns keep the slide's size.
 
-The values are like those of =text-scale:= and =title-scale:=.  The keys
-above still work on such a slide: ~C-=~ / =C--= and =C-c >= / =C-c <= move it
-by as many steps as the other slides, and =C-c {= / =C-c }= change its
-frames on top of that.
+The values are like those of =text-scale:= and =title-scale:=: steps of
+=text-scale-mode= (×1.2 each by default) from the size of Emacs's
+=default= face, 0.  Negative values make text smaller than that, e.g. -1
+is about 0.83 and -2 about 0.69 times it; the usual slide text, 2, is
+about 1.44 times it.  The keys above still work on such a slide: ~C-=~ /
+=C--= and =C-c >= / =C-c <= move it by as many steps as the other slides,
+and =C-c {= / =C-c }= change its frames on top of that.
 
 ** Resizing frames
 Code and results start with =org-slideboard-src-code-width= (0.5) of the
