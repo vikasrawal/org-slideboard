@@ -1801,6 +1801,17 @@ rendered at `org-slideboard-latex-scale'."
         (org-slideboard--preview-latex-new)
       (org-slideboard--preview-latex-old))))
 
+;; WORKAROUND(org-latex-preview colour bug) -- remove once fixed upstream.
+;; Org leaves out the colour command for an equation with the same
+;; colours as the one before it, but also counts cached equations,
+;; which are not in the LaTeX file.  An equation re-made after a
+;; cached one then comes out black.  Seen with Org main f38ac21c2.
+(defun org-slideboard--latex-always-set-color (args)
+  "Make `org-latex-preview--tex-styled' always set the colour.
+ARGS are its arguments; :continue-color is turned off in the options."
+  (pcase-let ((`(,type ,value ,options) args))
+    (list type value (plist-put (copy-sequence options) :continue-color nil))))
+
 (defun org-slideboard--preview-latex-new ()
   "Preview LaTeX math with the `org-latex-preview' library.
 Images already made are placed at once, the others when LaTeX is done;
@@ -1810,7 +1821,14 @@ Images already made are placed at once, the others when LaTeX is done;
   (let ((header (org-slideboard--new-latex-preamble)))
     (let ((org-latex-preview--preamble-content
            (or header org-latex-preview--preamble-content)))
-      (ignore-errors (org-latex-preview 'buffer))))
+      ;; WORKAROUND(org-latex-preview colour bug): see
+      ;; `org-slideboard--latex-always-set-color'.
+      (advice-add 'org-latex-preview--tex-styled :filter-args
+                  #'org-slideboard--latex-always-set-color)
+      (unwind-protect
+          (ignore-errors (org-latex-preview 'buffer))
+        (advice-remove 'org-latex-preview--tex-styled
+                       #'org-slideboard--latex-always-set-color))))
   (let ((win (get-buffer-window (current-buffer))))
     (dolist (ov (org-slideboard--latex-overlays))
       (when (eq (car-safe (overlay-get ov 'display)) 'image)
