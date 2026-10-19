@@ -531,6 +531,13 @@ C-l=, and laid out for the slides:
 - *Sharp*: the images are rendered at =org-slideboard-latex-scale= (4.0) and
   displayed smaller.  With =dvisvgm= (SVG) they are sharp at any size; with
   =dvipng= a higher render scale gives sharper but slower images.
+- *New latex preview*: with the =org-latex-preview= library of
+  Org's development branch (Org 10), Org itself sizes the images to
+  the text and makes them in the background.  org-slideboard then uses
+  it: equations are still shown at =org-slideboard-latex-size=,
+  centred if asked and kept free of beamer settings, but
+  =org-slideboard-latex-scale= is not used.  Each equation is set up
+  as soon as its image is ready.
 - *Left aligned*: display equations start at the left margin, like the
   text.  Set =org-slideboard-center-display-math= to =t= to centre them in the
   window or column, as LaTeX does. Inline math always stays in the text.

@@ -87,7 +87,9 @@
   "Scale at which LaTeX previews are rendered during the show.
 This sets the resolution only: the equations are then displayed at
 the size of the text, see `org-slideboard-latex-size'.  A high value keeps
-them sharp when the text is large."
+them sharp when the text is large.  Only used with the LaTeX previewer
+of Org 9.x: the newer `org-latex-preview' library sizes its images to
+the text itself."
   :type 'number
   :group 'org-slideboard)
 
@@ -1738,47 +1740,117 @@ to be left out, or when the process in
                          "" full))))
       (unless (equal header full) header))))
 
+(defvar org-latex-preview--preamble-content)
+(defvar org-latex-preview-overlay-update-functions)
+(declare-function org-latex-preview--get-preamble "org-latex-preview" (&optional buf))
+(declare-function org-latex-preview-clear-overlays "org-latex-preview" (&optional beg end))
+(declare-function org-latex-preview "org-latex-preview" (&optional mode))
+
+(defun org-slideboard--new-latex-preview-p ()
+  "Return non-nil if Org has the `org-latex-preview' library.
+It replaces the LaTeX previewer of Org 9.x.  Org 9.x has a command
+`org-latex-preview' too, but not this library."
+  (require 'org-latex-preview nil t))
+
+(defun org-slideboard--new-latex-preamble ()
+  "Return the preamble for previewing equations with `org-latex-preview'.
+It is the preamble Org would use, without the lines matching
+`org-slideboard-latex-preview-drop-regexp'.  Return nil when nothing needs
+to be left out."
+  (when org-slideboard-latex-preview-drop-regexp
+    (let* ((full (ignore-errors (org-latex-preview--get-preamble)))
+           (header (and full
+                        (replace-regexp-in-string
+                         (concat org-slideboard-latex-preview-drop-regexp "\n?")
+                         "" full))))
+      (unless (equal header full) header))))
+
+(defun org-slideboard--latex-overlay-placed (ov)
+  "Set up the LaTeX preview overlay OV once Org has put its image in.
+Run from `org-latex-preview-overlay-update-functions', since the
+`org-latex-preview' library makes the images asynchronously."
+  (when (eq (car-safe (overlay-get ov 'display)) 'image)
+    (org-slideboard--setup-latex-overlay
+     ov (get-buffer-window (overlay-buffer ov)))))
+
+(defun org-slideboard--setup-latex-overlay (ov &optional win)
+  "Set up the LaTeX preview overlay OV for the slides in window WIN.
+Its start is moved past #+NAME: etc. lines, it is centered if it is a
+display equation, and sized to the text."
+  ;; an environment's overlay starts at its #+NAME: etc. lines, which
+  ;; may be hidden as clutter, and a hidden start hides the image
+  (save-excursion
+    (goto-char (overlay-start ov))
+    (while (looking-at "[ \t]*#\\+.*\n") (goto-char (match-end 0)))
+    (when (< (overlay-start ov) (point) (overlay-end ov))
+      (move-overlay ov (point) (overlay-end ov))))
+  (org-slideboard--center-latex-overlay ov)
+  (org-slideboard--scale-latex-overlay
+   ov (org-slideboard--latex-display-scale)
+   (window-body-width (or win (selected-window)) t)))
+
 (defun org-slideboard--preview-latex ()
   "Preview LaTeX math in the accessible part of the current buffer.
-The images are rendered at `org-slideboard-latex-scale', centered if they
-are display equations, and sized to the text by
-`org-slideboard--scale-latex'."
+The images are centered if they are display equations, and sized to
+the text by `org-slideboard--scale-latex'.  With Org 9.x they are
+rendered at `org-slideboard-latex-scale'."
   (when (save-excursion
           (goto-char (point-min))
           (re-search-forward "\\$\\|\\\\(\\|\\\\\\[\\|\\\\begin{" nil t))
-    (let* ((header (org-slideboard--latex-preview-header))
-           (proc org-preview-latex-default-process)
-           (org-preview-latex-process-alist
-            (if header
-                (cons (cons proc (plist-put (copy-sequence
-                                             (cdr (assq proc org-preview-latex-process-alist)))
-                                            :latex-header header))
-                      org-preview-latex-process-alist)
-              org-preview-latex-process-alist))
-           (org-format-latex-options
-            (plist-put (plist-put (copy-sequence org-format-latex-options)
-                                  :scale org-slideboard-latex-scale)
-                       ;; Org's image cache ignores the #+LATEX_HEADER
-                       ;; lines, so make images with another preamble
-                       ;; get other file names
-                       :org-slideboard-header (and header (sha1 header)))))
-      (ignore-errors
-        (if (fboundp 'org-latex-preview)
-            (org-latex-preview '(16))
-          (with-no-warnings (org-preview-latex-fragment '(4)))))
-      (setq org-slideboard--latex-point
-            (org-slideboard--measure-latex-point
-             (list proc org-slideboard-latex-scale (and header (sha1 header))))))
-    ;; an environment's overlay starts at its #+NAME: etc. lines, which
-    ;; may be hidden as clutter, and a hidden start hides the image
+    (if (org-slideboard--new-latex-preview-p)
+        (org-slideboard--preview-latex-new)
+      (org-slideboard--preview-latex-old))))
+
+(defun org-slideboard--preview-latex-new ()
+  "Preview LaTeX math with the `org-latex-preview' library.
+Images already made are placed at once, the others when LaTeX is done;
+`org-slideboard--latex-overlay-placed' sets each up when it is placed."
+  (add-hook 'org-latex-preview-overlay-update-functions
+            #'org-slideboard--latex-overlay-placed nil t)
+  (let ((header (org-slideboard--new-latex-preamble)))
+    (let ((org-latex-preview--preamble-content
+           (or header org-latex-preview--preamble-content)))
+      (ignore-errors (org-latex-preview 'buffer))))
+  (let ((win (get-buffer-window (current-buffer))))
     (dolist (ov (org-slideboard--latex-overlays))
-      (save-excursion
-        (goto-char (overlay-start ov))
-        (while (looking-at "[ \t]*#\\+.*\n") (goto-char (match-end 0)))
-        (when (< (overlay-start ov) (point) (overlay-end ov))
-          (move-overlay ov (point) (overlay-end ov)))))
-    (org-slideboard--center-latex)
-    (org-slideboard--scale-latex)))
+      (when (eq (car-safe (overlay-get ov 'display)) 'image)
+        (org-slideboard--setup-latex-overlay ov win)))))
+
+(defun org-slideboard--preview-latex-old ()
+  "Preview LaTeX math with the LaTeX previewer of Org 9.x."
+  (let* ((header (org-slideboard--latex-preview-header))
+         (proc org-preview-latex-default-process)
+         (org-preview-latex-process-alist
+          (if header
+              (cons (cons proc (plist-put (copy-sequence
+                                           (cdr (assq proc org-preview-latex-process-alist)))
+                                          :latex-header header))
+                    org-preview-latex-process-alist)
+            org-preview-latex-process-alist))
+         (org-format-latex-options
+          (plist-put (plist-put (copy-sequence org-format-latex-options)
+                                :scale org-slideboard-latex-scale)
+                     ;; Org's image cache ignores the #+LATEX_HEADER
+                     ;; lines, so make images with another preamble
+                     ;; get other file names
+                     :org-slideboard-header (and header (sha1 header)))))
+    (ignore-errors
+      (if (fboundp 'org-latex-preview)
+          (org-latex-preview '(16))
+        (with-no-warnings (org-preview-latex-fragment '(4)))))
+    (setq org-slideboard--latex-point
+          (org-slideboard--measure-latex-point
+           (list proc org-slideboard-latex-scale (and header (sha1 header))))))
+  ;; an environment's overlay starts at its #+NAME: etc. lines, which
+  ;; may be hidden as clutter, and a hidden start hides the image
+  (dolist (ov (org-slideboard--latex-overlays))
+    (save-excursion
+      (goto-char (overlay-start ov))
+      (while (looking-at "[ \t]*#\\+.*\n") (goto-char (match-end 0)))
+      (when (< (overlay-start ov) (point) (overlay-end ov))
+        (move-overlay ov (point) (overlay-end ov)))))
+  (org-slideboard--center-latex)
+  (org-slideboard--scale-latex))
 
 (defun org-slideboard--measure-latex-point (key)
   "Return the pixels per LaTeX point in preview images made now.
@@ -1806,13 +1878,20 @@ The 10pt LaTeX font is matched to the text font: 12pt, the LaTeX line
 spacing, is shown as high as a line of text.  This follows the text
 scale and `variable-pitch-mode'.  `org-slideboard-latex-size' scales the
 result.  If the preview size could not be measured, fall back to
-`org-format-latex-options' :scale at text scale 0."
-  (* org-slideboard-latex-size
-     (if org-slideboard--latex-point
-         (/ (default-font-height) 12.0 org-slideboard--latex-point)
-       (* (/ (float (or (plist-get org-format-latex-options :scale) 1.0))
-             org-slideboard-latex-scale)
-          (expt text-scale-mode-step text-scale-mode-amount)))))
+`org-format-latex-options' :scale at text scale 0.
+
+The `org-latex-preview' library already sizes its images to the text,
+so with it this is just `org-slideboard-latex-size'."
+  (cond
+   ((featurep 'org-latex-preview) org-slideboard-latex-size)
+   (org-slideboard--latex-point
+    (* org-slideboard-latex-size
+       (/ (default-font-height) 12.0 org-slideboard--latex-point)))
+   (t
+    (* org-slideboard-latex-size
+       (/ (float (or (plist-get org-format-latex-options :scale) 1.0))
+          org-slideboard-latex-scale)
+       (expt text-scale-mode-step text-scale-mode-amount)))))
 
 (defun org-slideboard--center-string (image)
   "Return a string that moves IMAGE to the center of the window."
@@ -1826,15 +1905,23 @@ environments with equation numbers are as wide as a LaTeX page."
   (let ((scale (org-slideboard--latex-display-scale))
         (max-w (window-body-width (or win (selected-window)) t)))
     (dolist (ov (org-slideboard--latex-overlays))
-      (let ((spec (overlay-get ov 'display))
-            (center (overlay-get ov 'org-slideboard-center)))
-        (when (eq (car-safe spec) 'image)
-          (let ((props (copy-sequence (cdr spec))))
-            (setq props (plist-put props :scale scale))
-            (setq spec (cons 'image (plist-put props :max-width max-w))))
-          (overlay-put ov 'display spec)
-          (when (and center (overlay-buffer center))
-            (overlay-put center 'before-string (org-slideboard--center-string spec))))))))
+      (org-slideboard--scale-latex-overlay ov scale max-w))))
+
+(defun org-slideboard--scale-latex-overlay (ov scale max-w)
+  "Show the image of LaTeX preview overlay OV at SCALE, at most MAX-W wide."
+  (let ((spec (overlay-get ov 'display))
+        (center (overlay-get ov 'org-slideboard-center)))
+    (when (eq (car-safe spec) 'image)
+      (let ((props (copy-sequence (cdr spec))))
+        (setq props (plist-put props :scale scale))
+        (setq spec (cons 'image (plist-put props :max-width max-w))))
+      (overlay-put ov 'display spec)
+      ;; `org-latex-preview-mode' shows this spec again when point
+      ;; leaves the equation
+      (when (overlay-get ov 'org-preview-image)
+        (overlay-put ov 'org-preview-image spec))
+      (when (and center (overlay-buffer center))
+        (overlay-put center 'before-string (org-slideboard--center-string spec))))))
 
 (defun org-slideboard--display-math-p (ov)
   "Return non-nil if LaTeX preview overlay OV is a display equation.
@@ -1855,15 +1942,22 @@ own."
 Each gets an overlay whose `before-string' aligns the image to the
 center of the window; `org-slideboard--scale-latex' keeps it up to date
 when the image is resized."
-  (when org-slideboard-center-display-math
-    (dolist (ov (org-slideboard--latex-overlays))
-      (when (and (eq (car-safe (overlay-get ov 'display)) 'image)
-                 (org-slideboard--display-math-p ov))
-        (let ((center (make-overlay (overlay-start ov) (overlay-end ov) nil t nil)))
-          (overlay-put center 'before-string
-                       (org-slideboard--center-string (overlay-get ov 'display)))
-          (overlay-put ov 'org-slideboard-center center)
-          (push center org-slideboard--hide-overlays))))))
+  (dolist (ov (org-slideboard--latex-overlays))
+    (org-slideboard--center-latex-overlay ov)))
+
+(defun org-slideboard--center-latex-overlay (ov)
+  "Center LaTeX preview overlay OV if it is a display equation.
+Nothing is done if it is centered already."
+  (let ((center (overlay-get ov 'org-slideboard-center)))
+    (when (and org-slideboard-center-display-math
+               (eq (car-safe (overlay-get ov 'display)) 'image)
+               (not (and center (overlay-buffer center)))
+               (org-slideboard--display-math-p ov))
+      (setq center (make-overlay (overlay-start ov) (overlay-end ov) nil t nil))
+      (overlay-put center 'before-string
+                   (org-slideboard--center-string (overlay-get ov 'display)))
+      (overlay-put ov 'org-slideboard-center center)
+      (push center org-slideboard--hide-overlays))))
 
 (defun org-slideboard--hide-drawers ()
   "Fold drawers in the accessible part of the current buffer.
@@ -4093,7 +4187,11 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
   (org-slideboard--read-only-stop)
   (org-slideboard-keys-mode -1)
   ;; the equation images were made for the slides
-  (org-clear-latex-preview)
+  (remove-hook 'org-latex-preview-overlay-update-functions
+               #'org-slideboard--latex-overlay-placed t)
+  (if (fboundp 'org-latex-preview-clear-overlays)
+      (org-latex-preview-clear-overlays)
+    (org-clear-latex-preview))
   (text-scale-set 0)
   (delete-other-windows)
   (setq org-slideboard-presentation-file nil)
