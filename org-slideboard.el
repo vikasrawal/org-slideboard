@@ -3921,7 +3921,7 @@ On a title or section page, show that page again."
     (set-frame-name (format "%-180s%15s%s"
                             heading-text
                             "slide "
-                            (cdr (assoc heading-text org-slideboard-slide-titles))))
+                            (org-slideboard--slide-number-at (point-min))))
 
     ;; setup the text
     (switch-to-buffer (current-buffer))
@@ -4115,7 +4115,7 @@ presentation buffer, widened."
   (org-slideboard--cursor-save)
   (org-slideboard-initialize)
   (org-slideboard--goto-slide-heading)
-  (let ((n (cdr (assoc (nth 4 (org-heading-components)) org-slideboard-slide-titles))))
+  (let ((n (org-slideboard--slide-number-at (point))))
     (unless n (user-error "Not in a slide"))
     (setq org-slideboard--running t)
     (org-slideboard--setup-show)
@@ -4173,6 +4173,15 @@ first slide of each section if `org-slideboard-section-pages' is non-nil."
          (push (cons n (set-marker (make-marker) (point))) org-slideboard-slide-list))))
     (setq org-slideboard-slide-titles (nreverse org-slideboard-slide-titles)
           org-slideboard-slide-list (nreverse org-slideboard-slide-list))))
+
+(defun org-slideboard--slide-number-at (pos)
+  "Return the number of the slide whose heading starts at POS, or nil.
+Slides are found by position, not title, since titles can repeat."
+  (car (cl-find-if (lambda (entry)
+                     (and (markerp (cdr entry))
+                          (eq (marker-buffer (cdr entry)) (current-buffer))
+                          (= (cdr entry) pos)))
+                   org-slideboard-slide-list)))
 
 
 ;;;###autoload
