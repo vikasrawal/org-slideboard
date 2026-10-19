@@ -224,8 +224,9 @@ For `post-command-hook' during the show, see `org-slideboard-hide-cursor'."
   "If non-nil, the presentation is read-only during the show.
 This keeps a slide from being changed by a stray key.  \\[read-only-mode]
 in a slide makes that slide editable until you go to another slide;
-\\[org-slideboard-toggle-read-only] makes all slides editable, or
-read-only again, for the rest of the show.  When the show stops, the buffer is read-only only if it was before.
+\\[org-slideboard-toggle-read-only] makes all slides editable, or all
+read-only, for the rest of the show.  When the show stops, the buffer
+is read-only only if it was before.
 Running code still writes its results, and an edited source block can
 still be saved back.  Set to nil to leave the buffer editable during
 the show."
@@ -297,7 +298,7 @@ The current buffer is the presentation buffer."
         org-slideboard--read-only nil))
 
 (defun org-slideboard-toggle-read-only ()
-  "Make all slides of the running show editable, or read-only again.
+  "Make all slides of the running show editable, or all read-only.
 Like `#+SLIDEBOARD: read-only:nil', but during the show: the slide on
 screen and every slide after it follow the new setting, until this is
 pressed again or the show stops.  \\[read-only-mode] still changes just
@@ -314,8 +315,8 @@ the slide on screen."
           (with-current-buffer buf
             (setq buffer-read-only org-slideboard--read-only))))
       (message (if org-slideboard--read-only
-                   "Slides read-only again"
-                 "All slides editable for the rest of the show")))))
+                   "All slides read-only"
+                 "All slides editable")))))
 
 (defvar org-slideboard--previews 'unknown
   "The image previews of the presentation buffer before the show.
