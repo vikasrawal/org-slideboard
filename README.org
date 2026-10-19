@@ -538,6 +538,12 @@ C-l=, and laid out for the slides:
   centred if asked and kept free of beamer settings, but
   =org-slideboard-latex-scale= is not used.  Each equation is set up
   as soon as its image is ready.
+- *Faster equations*: with Org 10, only pdflatex can reuse a
+  precompiled preamble, so it is much faster than xelatex.  If your
+  files need xelatex for export (e.g. fontspec), set
+  =org-slideboard-latex-compiler= to ="pdflatex"= and leave the fontspec
+  lines out of the slide previews with
+  =org-slideboard-latex-preview-drop-regexp=.
 - *Left aligned*: display equations start at the left margin, like the
   text.  Set =org-slideboard-center-display-math= to =t= to centre them in the
   window or column, as LaTeX does. Inline math always stays in the text.
@@ -1191,6 +1197,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-latex-scale=               | 4.0                                            | scale at which equation images are rendered                        |
 | =org-slideboard-center-display-math=       | nil                                            | centre display equations                                           |
 | =org-slideboard-latex-preview-drop-regexp= | beamer commands                                | preamble lines left out of equation previews                       |
+| =org-slideboard-latex-compiler=            | nil                                            | compiler for equation previews (nil: Org's choice)                 |
 | =org-slideboard-beautify-modes=            | ='(org-modern-mode variable-pitch-mode)=       | modes turned on during the presentation                            |
 | =org-slideboard-disable-modes=             | ='(org-indent-mode display-line-numbers-mode)= | modes turned off during the presentation                           |
 | =org-slideboard-list-bullets=              | ='("●" "○" "■" "□")=                           | list bullets by nesting depth                                      |

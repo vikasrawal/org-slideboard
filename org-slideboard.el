@@ -111,6 +111,18 @@ every equation image.  Set to nil to keep all lines."
   :type '(choice (const :tag "Keep all lines" nil) regexp)
   :group 'org-slideboard)
 
+(defcustom org-slideboard-latex-compiler nil
+  "LaTeX compiler for previewing equations on the slides.
+nil uses Org's choice, `org-latex-compiler'.  A #+LATEX_COMPILER line in
+the file overrides both.  With Org's `org-latex-preview' library,
+\"pdflatex\" is much faster than \"xelatex\" or \"lualatex\", since only
+pdflatex can reuse a precompiled preamble.  It needs a preamble that
+pdflatex can read: leave out fontspec etc. with
+`org-slideboard-latex-preview-drop-regexp'.  Not used with Org 9.x."
+  :type '(choice (const :tag "Org's choice" nil)
+                 (const "pdflatex") (const "xelatex") (const "lualatex"))
+  :group 'org-slideboard)
+
 (defvar org-slideboard--latex-point-pixels nil
   "Pixels per LaTeX point in preview images, as (KEY . PIXELS).
 KEY is (PROCESS SCALE PREAMBLE-HASH), see `org-slideboard--latex-point'.")
@@ -1742,6 +1754,8 @@ to be left out, or when the process in
 
 (defvar org-latex-preview--preamble-content)
 (defvar org-latex-preview-overlay-update-functions)
+(defvar org-latex-preview-process-precompile)
+(defvar org-latex-compiler)
 (declare-function org-latex-preview--get-preamble "org-latex-preview" (&optional buf))
 (declare-function org-latex-preview-clear-overlays "org-latex-preview" (&optional beg end))
 (declare-function org-latex-preview "org-latex-preview" (&optional mode))
@@ -1818,9 +1832,22 @@ Images already made are placed at once, the others when LaTeX is done;
 `org-slideboard--latex-overlay-placed' sets each up when it is placed."
   (add-hook 'org-latex-preview-overlay-update-functions
             #'org-slideboard--latex-overlay-placed nil t)
-  (let ((header (org-slideboard--new-latex-preamble)))
+  (let* ((org-latex-compiler (or org-slideboard-latex-compiler
+                                 org-latex-compiler))
+         ;; the preamble depends on the compiler, so with our own
+         ;; compiler don't use Org's cached one
+         (header (or (org-slideboard--new-latex-preamble)
+                     (and org-slideboard-latex-compiler
+                          (ignore-errors (org-latex-preview--get-preamble))))))
     (let ((org-latex-preview--preamble-content
-           (or header org-latex-preview--preamble-content)))
+           (or header org-latex-preview--preamble-content))
+          ;; Org turns precompiling off in a buffer once it fails, or
+          ;; when the compiler can't do it (xelatex, lualatex): with
+          ;; pdflatex for the slides, use the global setting again
+          (org-latex-preview-process-precompile
+           (if (equal org-slideboard-latex-compiler "pdflatex")
+               (default-value 'org-latex-preview-process-precompile)
+             org-latex-preview-process-precompile)))
       ;; WORKAROUND(org-latex-preview colour bug): see
       ;; `org-slideboard--latex-always-set-color'.
       (advice-add 'org-latex-preview--tex-styled :filter-args
