@@ -1826,6 +1826,19 @@ ARGS are its arguments; :continue-color is turned off in the options."
   (pcase-let ((`(,type ,value ,options) args))
     (list type value (plist-put (copy-sequence options) :continue-color nil))))
 
+;; WORKAROUND(org-latex-preview numbering hang) -- remove once fixed upstream.
+;; In a narrowed buffer, Org's scan for numbered equations
+;; (`org-latex-preview--get-numbered-environments', via
+;; `org-element-cache-map') can loop forever.  Scan a parse of the
+;; slide instead.  Numbered equations on a slide then start at (1).
+;; Seen with Org main f38ac21c2.
+(defun org-slideboard--latex-numbering-from-parse (args)
+  "Give `org-latex-preview--get-numbered-environments' a parse tree.
+ARGS are its arguments (BEG END PARSE-TREE)."
+  (if (or (nth 2 args) (not (buffer-narrowed-p)))
+      args
+    (list (nth 0 args) (nth 1 args) (org-element-parse-buffer 'element))))
+
 (defun org-slideboard--preview-latex-new ()
   "Preview LaTeX math with the `org-latex-preview' library.
 Images already made are placed at once, the others when LaTeX is done;
@@ -1852,10 +1865,16 @@ Images already made are placed at once, the others when LaTeX is done;
       ;; `org-slideboard--latex-always-set-color'.
       (advice-add 'org-latex-preview--tex-styled :filter-args
                   #'org-slideboard--latex-always-set-color)
+      ;; WORKAROUND(org-latex-preview numbering hang): see
+      ;; `org-slideboard--latex-numbering-from-parse'.
+      (advice-add 'org-latex-preview--get-numbered-environments :filter-args
+                  #'org-slideboard--latex-numbering-from-parse)
       (unwind-protect
           (ignore-errors (org-latex-preview 'buffer))
         (advice-remove 'org-latex-preview--tex-styled
-                       #'org-slideboard--latex-always-set-color))))
+                       #'org-slideboard--latex-always-set-color)
+        (advice-remove 'org-latex-preview--get-numbered-environments
+                       #'org-slideboard--latex-numbering-from-parse))))
   (let ((win (get-buffer-window (current-buffer))))
     (dolist (ov (org-slideboard--latex-overlays))
       (when (eq (car-safe (overlay-get ov 'display)) 'image)
@@ -3892,7 +3911,7 @@ On a title or section page, show that page again."
   ;; prevent an error on narrowing then trying to make latex fragments
   ;; I think.
   (widen)
-  (org-cycle '(64))
+  (if (fboundp 'org-fold-show-all) (org-fold-show-all) (outline-show-all))
 
   (org-narrow-to-subtree)
   (visual-line-mode 1)
