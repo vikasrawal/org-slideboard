@@ -223,8 +223,9 @@ For `post-command-hook' during the show, see `org-slideboard-hide-cursor'."
 (defcustom org-slideboard-read-only t
   "If non-nil, the presentation is read-only during the show.
 This keeps a slide from being changed by a stray key.  \\[read-only-mode]
-in a slide makes that slide editable until you go to another slide.
-When the show stops, the buffer is read-only only if it was before.
+in a slide makes that slide editable until you go to another slide;
+\\[org-slideboard-toggle-read-only] makes all slides editable, or
+read-only again, for the rest of the show.  When the show stops, the buffer is read-only only if it was before.
 Running code still writes its results, and an edited source block can
 still be saved back.  Set to nil to leave the buffer editable during
 the show."
@@ -276,9 +277,9 @@ Once per show.  The current buffer is the presentation buffer."
     (setq org-slideboard--saved-read-only (list buffer-read-only)
           org-slideboard--read-only (or org-slideboard-read-only buffer-read-only))
     (setq buffer-read-only org-slideboard--read-only)
-    (when org-slideboard--read-only
-      (setq org-slideboard--saved-command-error-function (list command-error-function)
-            command-error-function #'org-slideboard--read-only-error))
+    ;; even if editable: `org-slideboard-toggle-read-only' may lock it later
+    (setq org-slideboard--saved-command-error-function (list command-error-function)
+          command-error-function #'org-slideboard--read-only-error)
     (dolist (fn org-slideboard--writing-functions)
       (advice-add fn :around #'org-slideboard--allow-writes))))
 
@@ -294,6 +295,27 @@ The current buffer is the presentation buffer."
     (setq buffer-read-only (car org-slideboard--saved-read-only)))
   (setq org-slideboard--saved-read-only nil
         org-slideboard--read-only nil))
+
+(defun org-slideboard-toggle-read-only ()
+  "Make all slides of the running show editable, or read-only again.
+Like `#+SLIDEBOARD: read-only:nil', but during the show: the slide on
+screen and every slide after it follow the new setting, until this is
+pressed again or the show stops.  \\[read-only-mode] still changes just
+the slide on screen."
+  (interactive)
+  (if (not org-slideboard--running)
+      (message "No slide show is running")
+    (let ((base (org-slideboard--show-buffer)))
+      (setq org-slideboard--read-only (not org-slideboard--read-only))
+      ;; the title strip and the frames on screen: the base buffer and
+      ;; its clones
+      (dolist (buf (buffer-list))
+        (when (eq (or (buffer-base-buffer buf) buf) base)
+          (with-current-buffer buf
+            (setq buffer-read-only org-slideboard--read-only))))
+      (message (if org-slideboard--read-only
+                   "Slides read-only again"
+                 "All slides editable for the rest of the show")))))
 
 (defvar org-slideboard--previews 'unknown
   "The image previews of the presentation buffer before the show.
@@ -4459,6 +4481,7 @@ otherwise it comes back to the slide it was on."
     (define-key map (kbd "\e\eq") 'org-slideboard-stop-slideshow)
     (define-key map (kbd "\e\ep") 'org-slideboard-export-pdf)
     (define-key map (kbd "\e\e0") 'org-slideboard-reset-text-size)
+    (define-key map (kbd "\e\ee") 'org-slideboard-toggle-read-only)
     ;; everything together, keeping proportions
     (define-key map (kbd "C-c >") 'org-slideboard-increase-all-text-size)
     (define-key map (kbd "C-c <") 'org-slideboard-decrease-all-text-size)
@@ -4482,6 +4505,7 @@ or `keymap-set' on this map.")
     ["Table of contents" org-slideboard-toc t]
     ["Everything larger" org-slideboard-increase-all-text-size t]
     ["Everything smaller" org-slideboard-decrease-all-text-size t]
+    ["Toggle read-only (all slides)" org-slideboard-toggle-read-only t]
     ["Save as PDF" org-slideboard-export-pdf t]
     ["Stop slide show"  org-slideboard-stop-slideshow t]))
 

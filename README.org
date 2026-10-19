@@ -200,6 +200,7 @@ strip, the frames, and the title and section pages.
 | =M-ESC q= | stop the presentation                    |
 | =M-ESC p= | save the slides as a PDF                 |
 | =M-ESC 0= | text and frame sizes back to the start   |
+| =M-ESC e= | all slides editable, or read-only again  |
 
 They are not active in other buffers, such as a REPL, another file or the
 buffer where a code block is edited, so your own keys keep working there
@@ -1060,7 +1061,10 @@ edited with ~C-c '~ can still be saved back.  When the show stops, the
 buffer is read-only only if it was before the show.
 
 To edit a lot during the show, turn this off with =#+SLIDEBOARD:
-read-only:nil= (or =org-slideboard-read-only=).
+read-only:nil= (or =org-slideboard-read-only=).  Or, during the show,
+press =M-ESC e=: the slide on screen and all the slides after it are
+editable, just as with =read-only:nil=.  Press it again to make them
+read-only again.  This lasts until the show stops.
 
 ** Theme
 A presentation can have its own Emacs theme, e.g. a light one for a
