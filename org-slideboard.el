@@ -96,7 +96,8 @@ the text itself."
 (defcustom org-slideboard-latex-size 0.8
   "Size of LaTeX equations relative to the text on the slides.
 At 1.0, the LaTeX font is as large as the text font.  Equations grow
-and shrink with the text of the slide."
+and shrink with the text of the slide.  A slide, section or beamer
+column can have its own size in a SLIDEBOARD_LATEX_SIZE property."
   :type 'number
   :group 'org-slideboard)
 
@@ -398,6 +399,15 @@ See `org-slideboard--scale-setting'.")
 (defvar org-slideboard--slide-title-scale nil
   "The text size of the title of the slide being shown, or nil.
 See `org-slideboard--scale-setting'.")
+
+(defvar-local org-slideboard--frame-latex-size nil
+  "The size of LaTeX previews in the frame shown in this buffer, or nil.
+From the SLIDEBOARD_LATEX_SIZE property of its beamer column, or of
+the slide, see `org-slideboard--latex-size-setting'.")
+
+(defvar org-slideboard--slide-latex-size nil
+  "The size of LaTeX previews on the slide being shown, or nil.
+See `org-slideboard--latex-size-setting'.")
 
 (defvar org-slideboard--slide-margins nil
   "The margins of the slide being shown, see `org-slideboard-margins'.")
@@ -1695,6 +1705,25 @@ buffer."
           (+ (string-to-number v) (- current (or start 0))))
       current)))
 
+(defun org-slideboard--latex-size-setting (pos)
+  "Return the LaTeX size for the slide or beamer column at heading POS.
+That is the value of its SLIDEBOARD_LATEX_SIZE property, or of a
+heading above it, if it is a positive number; otherwise nil, and
+`org-slideboard-latex-size' applies.  The current buffer is the
+presentation buffer."
+  (let ((v (org-with-wide-buffer (org-entry-get pos "SLIDEBOARD_LATEX_SIZE" t))))
+    (and v (string-match-p "\\`[ \t]*[0-9]*\\.?[0-9]+[ \t]*\\'" v)
+         (> (string-to-number v) 0)
+         (string-to-number v))))
+
+(defun org-slideboard--latex-size ()
+  "Return the size of LaTeX previews relative to the text in this buffer.
+That is the SLIDEBOARD_LATEX_SIZE of the frame or slide being shown,
+or `org-slideboard-latex-size'."
+  (or org-slideboard--frame-latex-size
+      org-slideboard--slide-latex-size
+      org-slideboard-latex-size))
+
 (defun org-slideboard--set-text-scale (wins)
   "Give the frames in WINS their text size.
 That is the frame's text size (`org-slideboard-text-scale', or the
@@ -1940,19 +1969,20 @@ current preview settings, and cached in `org-slideboard--latex-point-pixels'."
   "Return the image scale that sizes LaTeX previews to the current text.
 The 10pt LaTeX font is matched to the text font: 12pt, the LaTeX line
 spacing, is shown as high as a line of text.  This follows the text
-scale and `variable-pitch-mode'.  `org-slideboard-latex-size' scales the
+scale and `variable-pitch-mode'.  `org-slideboard--latex-size' (the
+slide's SLIDEBOARD_LATEX_SIZE or `org-slideboard-latex-size') scales the
 result.  If the preview size could not be measured, fall back to
 `org-format-latex-options' :scale at text scale 0.
 
 The `org-latex-preview' library already sizes its images to the text,
-so with it this is just `org-slideboard-latex-size'."
+so with it this is just `org-slideboard--latex-size'."
   (cond
-   ((featurep 'org-latex-preview) org-slideboard-latex-size)
+   ((featurep 'org-latex-preview) (org-slideboard--latex-size))
    (org-slideboard--latex-point
-    (* org-slideboard-latex-size
+    (* (org-slideboard--latex-size)
        (/ (default-font-height) 12.0 org-slideboard--latex-point)))
    (t
-    (* org-slideboard-latex-size
+    (* (org-slideboard--latex-size)
        (/ (float (or (plist-get org-format-latex-options :scale) 1.0))
           org-slideboard-latex-scale)
        (expt text-scale-mode-step text-scale-mode-amount)))))
@@ -2070,10 +2100,14 @@ I is the column index, used to name the indirect buffer."
         ;; its text size: a column's SLIDEBOARD_TEXT_SCALE, or the slide's
         (scale (with-current-buffer base
                  (org-slideboard--scale-setting (nth 1 col) "SLIDEBOARD_TEXT_SCALE"
-                                                'org-slideboard-text-scale))))
+                                                'org-slideboard-text-scale)))
+        ;; its LaTeX size: a column's SLIDEBOARD_LATEX_SIZE, or the slide's
+        (latex-size (with-current-buffer base
+                      (org-slideboard--latex-size-setting (nth 1 col)))))
     (push buf org-slideboard--column-buffers)
     (with-current-buffer buf
-      (setq-local org-slideboard--frame-text-scale scale))
+      (setq-local org-slideboard--frame-text-scale scale)
+      (setq-local org-slideboard--frame-latex-size latex-size))
     (set-window-buffer win buf)
     ;; after `set-window-buffer', which resets the margins to the buffer's
     (org-slideboard--apply-margins win)
@@ -3853,7 +3887,8 @@ in the presentation buffer, the header is shown above the page, see
                       (:section (org-slideboard--section-lines (cadr entry))))
               scale org-slideboard-page-text-scale
               animate (and org-slideboard-animate-pages
-                           (not org-slideboard--exporting)))
+                           (not org-slideboard--exporting))
+              org-slideboard--slide-latex-size nil)
         ;; section pages have the header of the slides
         (when (eq (car entry) :section)
           (setq header-pos (marker-position (cadr entry))
@@ -3938,7 +3973,9 @@ On a title or section page, show that page again."
                                          'org-slideboard-text-scale)
           org-slideboard--slide-title-scale
           (org-slideboard--scale-setting (point) "SLIDEBOARD_TITLE_SCALE"
-                                         'org-slideboard-title-text-scale))
+                                         'org-slideboard-title-text-scale)
+          org-slideboard--slide-latex-size
+          (org-slideboard--latex-size-setting (point)))
     ;; beamer overlays: the parts that appear in steps
     (setq org-slideboard--slide-covered (or (org-slideboard--covered-setting (point))
                                             org-slideboard-covered))

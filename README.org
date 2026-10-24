@@ -499,6 +499,18 @@ about 1.44 times it.  The keys above still work on such a slide: ~C-=~ /
 =C--= and =C-c >= / =C-c <= move it by as many steps as the other slides,
 and =C-c {= / =C-c }= change its frames on top of that.
 
+The size of equations relative to the text can be set the same way, for
+a slide, a section or a beamer column, with =SLIDEBOARD_LATEX_SIZE=.  It
+replaces =org-slideboard-latex-size= (=latex-size:=, 0.8 by default)
+there, e.g. for a formula made of =\text{...}= that looks too large:
+
+#+begin_example
+,** Supply                                                      :slide:
+:PROPERTIES:
+:SLIDEBOARD_LATEX_SIZE: 0.6
+:END:
+#+end_example
+
 ** Resizing frames
 Code and results start with =org-slideboard-src-code-width= (0.5) of the
 space for the code, and beamer columns with their =BEAMER_col= widths.  When
@@ -575,6 +587,9 @@ For example, for slightly larger, centred equations in one presentation:
 #+begin_example
 ,#+SLIDEBOARD: latex-size:1.0 center-math:t
 #+end_example
+
+For one slide, section or beamer column, use the =SLIDEBOARD_LATEX_SIZE=
+property (see [[*Text size][Text size]]).
 
 ** Macros
 Org macros (={{{name(arguments)}}}=) are shown on the slides as their
