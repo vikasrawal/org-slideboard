@@ -591,6 +591,30 @@ For example, for slightly larger, centred equations in one presentation:
 For one slide, section or beamer column, use the =SLIDEBOARD_LATEX_SIZE=
 property (see [[*Text size][Text size]]).
 
+*** Fonts in equations
+The text of a slide is drawn by Emacs, in its own font (sans-serif with
+=variable-pitch-mode=, for instance), but an equation is an image made by
+LaTeX.  Words in an equation, such as =\text{Production}= or
+=\mathrm{d}x=, are therefore in LaTeX's document font: Computer Modern
+Roman, a serif font, unless the preamble sets another.  The =fontspec=
+lines that set the font of a beamer export with xelatex are not read by
+pdflatex, and are usually left out of the previews (see
+=org-slideboard-latex-preview-drop-regexp=), so they do not help here.
+
+For sans-serif words in equations, as in beamer, set the font in a
+=#+LATEX_HEADER:= line, which the previews use too and beamer export
+accepts:
+
+#+begin_example
+,#+LATEX_HEADER: \renewcommand{\familydefault}{\sfdefault}
+#+end_example
+
+This gives Computer Modern Sans.  For a closer match to the slide font,
+load a pdflatex package for that font instead, e.g.
+=\usepackage[sfdefault]{FiraSans}= for Fira Sans, and make sure
+=org-slideboard-latex-preview-drop-regexp= does not leave the line out.
+Math letters such as =x= stay italic either way.
+
 ** Macros
 Org macros (={{{name(arguments)}}}=) are shown on the slides as their
 expansion, with overlays, so the file is not changed.  Many macros expand
