@@ -414,8 +414,9 @@ See `org-slideboard--latex-size-setting'.")
 
 (defcustom org-slideboard-hide-clutter t
   "If non-nil, hide beamer and babel clutter during the show.
-That is drawers, keyword lines, source blocks shown only as results
-and stray LaTeX lines."
+That is drawers, keyword lines, source blocks shown only as results,
+stray LaTeX lines and table rows of column width and alignment
+cookies, such as | <l> | <r10> |."
   :type 'boolean
   :group 'org-slideboard)
 
@@ -995,6 +996,28 @@ left alone."
                            (equal (car info) "slideboard-elisp")))
               (org-slideboard--hide-region block-beg block-end))
             (when block-end (goto-char block-end))))
+        ;; table rows of width and alignment cookies, which export
+        ;; leaves out too.  They are displayed as nothing rather than
+        ;; made invisible: with `org-modern-mode', whose | are display
+        ;; properties, an invisible row shows its last | before the
+        ;; next row
+        (goto-char beg)
+        (while (re-search-forward "^[ \t]*|" end t)
+          (beginning-of-line)
+          (let* ((el (save-match-data (org-element-at-point)))
+                 ;; on its first line, the element is the table itself
+                 (table (pcase (org-element-type el)
+                          ('table el)
+                          ('table-row (org-element-property :parent el)))))
+            (when (and table
+                       (eq (org-element-property :type table) 'org)
+                       (org-slideboard--table-cookie-row-p))
+              (let ((ov (make-overlay (point) (min end (1+ (line-end-position)))
+                                      nil t nil)))
+                (overlay-put ov 'display "")
+                (overlay-put ov 'evaporate t)
+                (push ov org-slideboard--hide-overlays))))
+          (forward-line 1))
         ;; blank lines left at the top once the clutter is hidden
         (goto-char beg)
         (while (and (< (point) end)
@@ -3563,6 +3586,22 @@ characters, and in a horizontal rule also the + characters."
       (setq pos (nreverse pos))
       (cl-loop for (a b) on pos while b collect (cons (1+ a) b)))))
 
+(defun org-slideboard--table-cookie-row-p ()
+  "Return non-nil if the table line at point holds column cookies.
+That is a row whose cells are all empty or width and alignment
+cookies, such as <l>, <r10> or <15>, and not all empty.  Export
+leaves such rows out, and so do the slides."
+  (save-excursion
+    (beginning-of-line)
+    (and (not (looking-at-p "[ \t]*|-"))
+         (let ((cells (mapcar (lambda (c)
+                                (string-trim (buffer-substring-no-properties
+                                              (car c) (cdr c))))
+                              (org-slideboard--table-line-cells))))
+           (and (cl-every (lambda (s) (string-match-p "\\`\\(?:<[lrc]?[0-9]*>\\)?\\'" s))
+                          cells)
+                (cl-some (lambda (s) (not (string-empty-p s))) cells))))))
+
 (defun org-slideboard--table-pad (beg end pixels &optional face)
   "Display the region BEG END as blank space PIXELS wide, in FACE.
 Return the overlay, or nil if the region is empty."
@@ -3576,9 +3615,16 @@ Return the overlay, or nil if the region is empty."
       ov)))
 
 (defun org-slideboard--table-line-x (win pos)
-  "Return the x position, in pixels, of POS from the start of its line in WIN."
+  "Return the x position, in pixels, of POS in its table line in WIN.
+It is measured from just after the first | of the line, which every
+row has: measured from the start of a line that follows hidden text,
+such as a row of column cookies, that | can count as no width."
   (car (window-text-pixel-size
-        win (save-excursion (goto-char pos) (line-beginning-position)) pos)))
+        win (save-excursion (goto-char pos)
+                            (beginning-of-line)
+                            (skip-chars-forward " \t")
+                            (min pos (1+ (point))))
+        pos)))
 
 (defun org-slideboard--align-tables (&optional win)
   "Align the Org tables in the accessible region to their display in WIN.
@@ -3608,26 +3654,37 @@ right-aligned.  Horizontal rules are drawn to the column widths.  See
               ;; measure
               (while (and (< (point) (or end (point-max)))
                           (looking-at-p "[ \t]*|"))
-                (let* ((hline (looking-at-p "[ \t]*|-"))
-                       (cells
-                        (cl-loop
-                         for (b . e) in (org-slideboard--table-line-cells)
-                         collect
-                         (let* ((cb (save-excursion (goto-char b)
-                                                    (skip-chars-forward " \t" e)
-                                                    (point)))
-                                (ce (save-excursion (goto-char e)
-                                                    (skip-chars-backward " \t" cb)
-                                                    (point)))
-                                (w (if (or hline (>= cb ce)) 0
-                                     (car (window-text-pixel-size win cb ce)))))
-                           (when (and (not spc) (not hline) (< b cb))
-                             (setq spc (car (window-text-pixel-size win b (1+ b)))))
-                           (when (and (not sep) (not hline))
-                             (setq sep (car (window-text-pixel-size win (1- b) b))))
-                           (list b e cb ce w
-                                 (buffer-substring-no-properties cb ce))))))
-                  (push (cons hline cells) rows))
+                ;; a row of width and alignment cookies is hidden, see
+                ;; `org-slideboard--hide-clutter': leave it out
+                (unless (and org-slideboard-hide-clutter
+                             (org-slideboard--table-cookie-row-p))
+                  (let* ((hline (looking-at-p "[ \t]*|-"))
+                         (cells
+                          (cl-loop
+                           for (b . e) in (org-slideboard--table-line-cells)
+                           collect
+                           (let* ((cb (save-excursion (goto-char b)
+                                                      (skip-chars-forward " \t" e)
+                                                      (point)))
+                                  (ce (save-excursion (goto-char e)
+                                                      (skip-chars-backward " \t" cb)
+                                                      (point)))
+                                  (w (if (or hline (>= cb ce)) 0
+                                       (car (window-text-pixel-size win cb ce)))))
+                             (when (and (not spc) (not hline) (< b cb))
+                               (setq spc (car (window-text-pixel-size win b (1+ b)))))
+                             ;; from a | inside the line: the first can
+                             ;; count as no width, see
+                             ;; `org-slideboard--table-line-x'
+                             (when (and (not sep) (not hline)
+                                        (not (string-match-p
+                                              "\\`[ \t]*\\'"
+                                              (buffer-substring-no-properties
+                                               (line-beginning-position) (1- b)))))
+                               (setq sep (car (window-text-pixel-size win (1- b) b))))
+                             (list b e cb ce w
+                                   (buffer-substring-no-properties cb ce))))))
+                    (push (cons hline cells) rows)))
                 (forward-line 1))
               (setq rows (nreverse rows)
                     spc (or spc (frame-char-width (window-frame win)))

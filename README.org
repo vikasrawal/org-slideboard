@@ -660,6 +660,12 @@ widths.  This is redone whenever the text size changes.
 Only the display changes; the file is not.  To keep Org's own layout, set
 =org-slideboard-align-tables= to nil (or =#+SLIDEBOARD: align-tables:nil=).
 
+A row of column width and alignment cookies, such as =| <l> | <r10> |=
+(see [[https://orgmode.org/manual/Column-Width-and-Alignment.html][Column Width and Alignment]] in the Org manual), is hidden on the
+slides, as export leaves it out, and does not count for the column
+widths.  Org still aligns the cells as the cookies say.  Like other
+clutter, it stays visible if =org-slideboard-hide-clutter= is nil.
+
 *** Merged cells
 Org tables cannot merge cells, so org-slideboard has its own markers: a
 cell that holds just =<<= is part of the cell on its left, and one that
