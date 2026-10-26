@@ -1101,6 +1101,40 @@ the presentation again:
 Note: in variable-pitch text, code blocks can lose their alignment.  Tables
 are re-aligned during the show (see [[*Tables][Tables]]).
 
+** Changing faces on the slides
+The slides use your Emacs faces: bold text, tables, links and so on look
+as they do when you edit.  To show some of them differently during the
+show only, list them in =org-slideboard-face-remaps=, as a face and its
+new attributes (or another face to use instead):
+
+#+begin_src emacs-lisp
+;; bold text in orange and tables in pink, on the slides only
+(setq org-slideboard-face-remaps
+      '((bold :foreground "orange")
+        (org-table :foreground "pink")))
+#+end_src
+
+or, with =use-package=:
+
+#+begin_src emacs-lisp
+(use-package org-slideboard
+  :custom
+  (org-slideboard-face-remaps '((bold :foreground "orange"))))
+#+end_src
+
+The faces are changed in the slides, title and section pages, and back
+when the show stops; other buffers are never changed.  Faces that
+inherit from a remapped one change too: description terms
+(=org-slideboard-description-term=) inherit from =bold=, for example.
+org-slideboard's own faces, such as =org-slideboard-bullet=,
+=org-slideboard-header=, =org-slideboard-footline= and
+=org-slideboard-page-title=, are only used in the show, so customise them
+directly (=M-x customize-group RET org-slideboard=).
+
+Use this rather than a minor mode of your own in
+=org-slideboard-beautify-modes= that remaps faces: each slide is shown
+in a fresh copy of the buffer, where such a mode would be skipped.
+
 ** Cursor
 While a slide is shown, the cursor is hidden, so it does not blink at
 the audience.  It comes back, as you have it, as soon as you move it,
@@ -1244,6 +1278,7 @@ that is in effect (the local one if there is one).
 | =org-slideboard-latex-preview-drop-regexp= | beamer commands                                | preamble lines left out of equation previews                       |
 | =org-slideboard-latex-compiler=            | nil                                            | compiler for equation previews (nil: Org's choice)                 |
 | =org-slideboard-beautify-modes=            | ='(org-modern-mode variable-pitch-mode)=       | modes turned on during the presentation                            |
+| =org-slideboard-face-remaps=               | nil                                            | faces shown differently during the presentation                    |
 | =org-slideboard-disable-modes=             | ='(org-indent-mode display-line-numbers-mode)= | modes turned off during the presentation                           |
 | =org-slideboard-list-bullets=              | ='("●" "○" "■" "□")=                           | list bullets by nesting depth                                      |
 | =org-slideboard-list-indent=               | 4                                              | indentation per list level, in spaces                              |

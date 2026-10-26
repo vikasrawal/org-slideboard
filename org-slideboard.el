@@ -430,6 +430,21 @@ to show plain org."
   :type '(repeat symbol)
   :group 'org-slideboard)
 
+(defcustom org-slideboard-face-remaps nil
+  "Faces shown differently during the show, as (FACE . SPECS) entries.
+SPECS are as for `face-remap-add-relative': face attributes such as
+:foreground \"orange\", or other faces.  For example
+
+  ((bold :foreground \"orange\")
+   (org-table :foreground \"pink\"))
+
+shows bold text in orange and tables in pink on the slides only.  The
+slides otherwise use your Emacs faces, and other buffers are not
+changed.  org-slideboard's own faces, such as `org-slideboard-bullet',
+are customised directly."
+  :type '(alist :key-type face :value-type (repeat sexp))
+  :group 'org-slideboard)
+
 (defface org-slideboard-bullet
   '((t :inherit org-level-1 :weight bold :height 1.3))
   "Face for list bullets during the show, see `org-slideboard-list-bullets'.
@@ -616,6 +631,9 @@ faces.  For example:
 
 (defvar-local org-slideboard--beautified nil
   "Modes turned on by `org-slideboard--beautify' in this buffer.")
+
+(defvar-local org-slideboard--face-cookies nil
+  "Face remappings made in this buffer from `org-slideboard-face-remaps'.")
 
 (defcustom org-slideboard-title-page t
   "If non-nil, start the show with a title page.
@@ -2154,6 +2172,7 @@ I is the column index, used to name the indirect buffer."
       ;; remapping was reset above, so apply the beautify modes afresh
       (setq org-slideboard--beautified nil
             org-slideboard--disabled nil
+            org-slideboard--face-cookies nil
             org-slideboard--table-overlays nil)
       (kill-local-variable 'buffer-face-mode)
       (org-slideboard--beautify)
@@ -2408,7 +2427,8 @@ share of the width, or is centred or flush right in it, see
           ;; the look of the slides, afresh: the face remapping is reset
           (setq-local face-remapping-alist nil)
           (kill-local-variable 'buffer-face-mode)
-          (setq org-slideboard--beautified nil)
+          (setq org-slideboard--beautified nil
+                org-slideboard--face-cookies nil)
           (let ((org-slideboard-beautify-modes modes)
                 (org-slideboard-disable-modes disable)
                 (org-slideboard-hide-emphasis-markers hide-markers))
@@ -2867,7 +2887,8 @@ invalid values are skipped with a message."
   "Turn on `org-slideboard-beautify-modes' and marker hiding in this buffer.
 Only modes that are installed and not already on are turned on, and
 they are recorded so `org-slideboard--unbeautify' can turn them off.
-Also turn off the modes in `org-slideboard-disable-modes'."
+Also turn off the modes in `org-slideboard-disable-modes', and remap
+the faces in `org-slideboard-face-remaps'."
   (org-slideboard--disable-modes)
   (dolist (mode org-slideboard-beautify-modes)
     (ignore-errors
@@ -2891,8 +2912,20 @@ Also turn off the modes in `org-slideboard-disable-modes'."
              (not org-hide-macro-markers))
     (setq-local org-hide-macro-markers t)
     (push 'org-hide-macro-markers org-slideboard--beautified))
+  (org-slideboard--remap-faces)
   (when org-slideboard--beautified
     (font-lock-flush)))
+
+(defun org-slideboard--remap-faces ()
+  "Remap the faces in `org-slideboard-face-remaps' in this buffer.
+Nothing is done if they are remapped already; `org-slideboard--unbeautify'
+removes them."
+  (unless org-slideboard--face-cookies
+    (dolist (entry org-slideboard-face-remaps)
+      ;; a bad entry should not stop the show
+      (ignore-errors
+        (push (apply #'face-remap-add-relative (car entry) (cdr entry))
+              org-slideboard--face-cookies)))))
 
 (defun org-slideboard--disable-modes ()
   "Turn off the modes in `org-slideboard-disable-modes' in this buffer.
@@ -2905,6 +2938,8 @@ They are recorded so `org-slideboard--unbeautify' can turn them on again."
 
 (defun org-slideboard--unbeautify ()
   "Undo `org-slideboard--beautify' in this buffer."
+  (mapc #'face-remap-remove-relative org-slideboard--face-cookies)
+  (setq org-slideboard--face-cookies nil)
   (dolist (mode org-slideboard--disabled)
     (ignore-errors (funcall mode 1)))
   (setq org-slideboard--disabled nil)
@@ -3900,6 +3935,7 @@ in the presentation buffer, the header is shown above the page, see
   (setq-local cursor-type nil)
   (setq-local show-trailing-whitespace nil)
   (org-slideboard--disable-modes)
+  (org-slideboard--remap-faces)
   (setq-local indent-tabs-mode nil)
   (org-slideboard--hide-mode-line (selected-window))
   (when header-pos
